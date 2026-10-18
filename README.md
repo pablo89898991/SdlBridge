@@ -55,3 +55,5 @@ The status line says "Forced SDL3 USB mode: waiting..." until SDL's driver has t
 "Gyro (sent to DroidDeck)": speed slider (100% = 1:1, up to 800%) and per-axis invert. Keep `GYRO_GAIN = 1f` in DroidDeck's `DualSenseBridge.kt` so the two don't multiply.
 
 Axis remap: each DroidDeck gyro axis (X/Y/Z) can be fed from any controller axis, with optional invert. The accelerometer follows by default so gravity stays consistent with rotation.
+
+Touchpad orientation: invert X, invert Y and swap X/Y, applied to both trackpads (swap first, then invert).

@@ -84,6 +84,13 @@ public class BridgeService extends Service implements NativeBridge.Listener {
 
     // ---------- client -> controller ----------
 
+    /** Applies the touchpad swap / invert settings to one trackpad's [down, x, y]. */
+    private static void orient(float[] p) {
+        if (Settings.touchSwap) { float t = p[1]; p[1] = p[2]; p[2] = t; }
+        if (Settings.touchInvX) p[1] = -p[1];
+        if (Settings.touchInvY) p[2] = -p[2];
+    }
+
     private void mergeOutput(Bundle b) {
         if (b == null) return;
         if (b.containsKey("rl") || b.containsKey("rr")) {
@@ -157,6 +164,8 @@ public class BridgeService extends Service implements NativeBridge.Listener {
         if (((mask >> 13) & 1) != 0 && mode != Settings.TOUCH_OFF) {
             click = (mode == Settings.TOUCH_SPLIT && padL[0] > 0f && padR[0] == 0f) ? 0 : 1;
         }
+        orient(padL);
+        orient(padR);
         b.putFloatArray("padL", padL);
         b.putFloatArray("padR", padR);
         b.putInt("padClick", click);

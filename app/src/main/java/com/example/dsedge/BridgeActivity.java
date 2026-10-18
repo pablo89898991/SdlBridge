@@ -17,6 +17,7 @@ import android.view.ViewGroup;
 import android.widget.AdapterView;
 import android.widget.ArrayAdapter;
 import android.widget.Button;
+import android.widget.CheckBox;
 import android.widget.LinearLayout;
 import android.widget.ScrollView;
 import android.widget.SeekBar;
@@ -108,6 +109,9 @@ public class BridgeActivity extends SDLActivity implements NativeBridge.Listener
 
         // ---- Touchpad ----
         root.addView(header("Touchpad"));
+        addCheck(root, "Invert touchpad X (left/right)", Settings.touchInvX, on -> Settings.touchInvX = on);
+        addCheck(root, "Invert touchpad Y (up/down)", Settings.touchInvY, on -> Settings.touchInvY = on);
+        addCheck(root, "Swap touchpad X and Y (applied before invert)", Settings.touchSwap, on -> Settings.touchSwap = on);
         addSpinner(root, "Layout", Settings.TOUCH_NAMES, Settings.touchMode, v -> {
             Settings.touchMode = v;
             Settings.save();
@@ -210,6 +214,17 @@ public class BridgeActivity extends SDLActivity implements NativeBridge.Listener
         });
         root.addView(t);
         root.addView(sb);
+    }
+
+    private interface BoolSink { void set(boolean on); }
+
+    private void addCheck(LinearLayout root, String label, boolean value, final BoolSink sink) {
+        CheckBox c = new CheckBox(this);
+        c.setText(label);
+        c.setTextColor(Color.WHITE);
+        c.setChecked(value);
+        c.setOnCheckedChangeListener((v, on) -> { sink.set(on); Settings.save(); });
+        root.addView(c);
     }
 
     private void lightChanged() {

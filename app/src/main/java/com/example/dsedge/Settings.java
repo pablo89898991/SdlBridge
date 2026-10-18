@@ -27,6 +27,7 @@ final class Settings {
     static volatile int touchMode = TOUCH_SPLIT;
     static final int[] src = new int[4];
     static volatile boolean forceUsb = true;
+    static volatile boolean touchInvX, touchInvY, touchSwap;
     /** Gyro speed sent to DroidDeck, in percent (100 = 1:1), and which axes are flipped (bit 0 = X, 1 = Y, 2 = Z). */
     static volatile int gyroGain = 100, gyroInvert = 0;
     /** Output axis i is taken from input axis gyroMap[i] (0 = X, 1 = Y, 2 = Z). */
@@ -48,6 +49,9 @@ final class Settings {
             src[i] = Math.max(0, Math.min(SRC_BITS.length - 1, prefs.getInt("src" + i, 0)));
         }
         forceUsb = prefs.getBoolean("forceUsb", true);
+        touchInvX = prefs.getBoolean("touchInvX", false);
+        touchInvY = prefs.getBoolean("touchInvY", false);
+        touchSwap = prefs.getBoolean("touchSwap", false);
         gyroGain = Math.max(1, Math.min(800, prefs.getInt("gyroGain", 100)));
         gyroInvert = Math.max(0, Math.min(7, prefs.getInt("gyroInvert", 0)));
         for (int i = 0; i < 3; i++) gyroMap[i] = Math.max(0, Math.min(2, prefs.getInt("gyroMap" + i, i)));
@@ -66,6 +70,7 @@ final class Settings {
         e.putInt("touchMode", touchMode);
         for (int i = 0; i < 4; i++) e.putInt("src" + i, src[i]);
         e.putBoolean("forceUsb", forceUsb);
+        e.putBoolean("touchInvX", touchInvX).putBoolean("touchInvY", touchInvY).putBoolean("touchSwap", touchSwap);
         for (int i = 0; i < 3; i++) e.putInt("gyroMap" + i, gyroMap[i]);
         e.putBoolean("accelFollows", accelFollows);
         e.putInt("gyroGain", gyroGain).putInt("gyroInvert", gyroInvert);
