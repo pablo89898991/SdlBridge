@@ -1,4 +1,4 @@
-# DualSense Bridge (SDL3)
+# SDL3BridgeDroidDeck
 
 Android app that uses SDL3 to read game controllers over USB (DualSense, DualSense Edge, DualShock 4,
 Xbox, Switch Pro, ... anything SDL3 supports) and streams them to DroidDeck through the same bound
@@ -49,3 +49,9 @@ Settings -> "SDL3 driver":
 - **Force SDL3 USB driver** button: asks Android for USB access to every controller-like USB device (using SDL's own permission action), then restarts SDL's gamepad enumeration. Pick "always" in the dialog.
 
 The status line says "Forced SDL3 USB mode: waiting..." until SDL's driver has the controller.
+
+## Gyro speed
+
+"Gyro (sent to DroidDeck)": speed slider (100% = 1:1, up to 800%) and per-axis invert. Keep `GYRO_GAIN = 1f` in DroidDeck's `DualSenseBridge.kt` so the two don't multiply.
+
+Axis remap: each DroidDeck gyro axis (X/Y/Z) can be fed from any controller axis, with optional invert. The accelerometer follows by default so gravity stays consistent with rotation.

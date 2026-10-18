@@ -53,7 +53,7 @@ public class BridgeActivity extends SDLActivity implements NativeBridge.Listener
         root.setBackgroundColor(Color.BLACK);
         root.setPadding(16, 24, 16, 16);
 
-        statusView = text("DualSense Bridge (SDL3)  " + info.tag + "  SDL " + info.sdl + "\n" + NativeBridge.lastStatus, 13f);
+        statusView = text("SDL3BridgeDroidDeck  " + info.tag + "  SDL " + info.sdl + "\n" + NativeBridge.lastStatus, 13f);
         usbView = text("USB: checking...", 12f);
         summaryView = text("Press every button and move everything to test it.", 12f);
         pad = new ControllerView(this);
@@ -84,6 +84,27 @@ public class BridgeActivity extends SDLActivity implements NativeBridge.Listener
         root.addView(button("Force SDL3 USB driver", v -> forceUsbDriver()));
         root.addView(text("Plug the controller in with USB-C, tap the button and allow USB access "
                 + "(choose 'always' to skip this next time). Works for any SDL3-supported controller.", 11f));
+
+        // ---- Gyro ----
+        root.addView(header("Gyro (sent to DroidDeck)"));
+        addSlider(root, "Gyro speed % (100 = 1:1)", 800, Settings.gyroGain, v -> Settings.gyroGain = Math.max(1, v));
+        addSpinner(root, "Invert gyro axes", Settings.GYRO_INV_NAMES, Settings.gyroInvert, v -> {
+            Settings.gyroInvert = v;
+            Settings.save();
+        });
+        for (int i = 0; i < 3; i++) {
+            final int out = i;
+            addSpinner(root, "DroidDeck gyro " + "XYZ".charAt(i) + " comes from", Settings.AXIS_NAMES, Settings.gyroMap[i], v -> {
+                Settings.gyroMap[out] = v;
+                Settings.save();
+            });
+        }
+        addSpinner(root, "Apply remap and invert to accelerometer too", new String[] { "Yes (recommended)", "No" },
+                Settings.accelFollows ? 0 : 1, v -> {
+            Settings.accelFollows = v == 0;
+            Settings.save();
+        });
+        root.addView(text("Takes effect immediately. If aiming feels too slow, raise it; if an axis moves the wrong way, invert it.", 11f));
 
         // ---- Touchpad ----
         root.addView(header("Touchpad"));
@@ -321,7 +342,7 @@ public class BridgeActivity extends SDLActivity implements NativeBridge.Listener
 
     @Override public void onStatus(final String s) {
         ui.post(() -> {
-            statusView.setText("DualSense Bridge (SDL3)\n" + s);
+            statusView.setText("SDL3BridgeDroidDeck\n" + s);
             if (s.startsWith("Controller disconnected") || s.startsWith("Waiting")) pad.setDisconnected();
         });
     }

@@ -27,6 +27,13 @@ final class Settings {
     static volatile int touchMode = TOUCH_SPLIT;
     static final int[] src = new int[4];
     static volatile boolean forceUsb = true;
+    /** Gyro speed sent to DroidDeck, in percent (100 = 1:1), and which axes are flipped (bit 0 = X, 1 = Y, 2 = Z). */
+    static volatile int gyroGain = 100, gyroInvert = 0;
+    /** Output axis i is taken from input axis gyroMap[i] (0 = X, 1 = Y, 2 = Z). */
+    static final int[] gyroMap = { 0, 1, 2 };
+    static final String[] AXIS_NAMES = { "Controller X (pitch)", "Controller Y (yaw)", "Controller Z (roll)" };
+    static volatile boolean accelFollows = true;
+    static final String[] GYRO_INV_NAMES = { "None", "X", "Y", "Z", "X + Y", "X + Z", "Y + Z", "X + Y + Z" };
     static volatile int lightR = 0, lightG = 0, lightB = 255, brightness = 100, player = 0;
 
     private static SharedPreferences prefs;
@@ -41,6 +48,10 @@ final class Settings {
             src[i] = Math.max(0, Math.min(SRC_BITS.length - 1, prefs.getInt("src" + i, 0)));
         }
         forceUsb = prefs.getBoolean("forceUsb", true);
+        gyroGain = Math.max(1, Math.min(800, prefs.getInt("gyroGain", 100)));
+        gyroInvert = Math.max(0, Math.min(7, prefs.getInt("gyroInvert", 0)));
+        for (int i = 0; i < 3; i++) gyroMap[i] = Math.max(0, Math.min(2, prefs.getInt("gyroMap" + i, i)));
+        accelFollows = prefs.getBoolean("accelFollows", true);
         lightR = prefs.getInt("lightR", 0);
         lightG = prefs.getInt("lightG", 0);
         lightB = prefs.getInt("lightB", 255);
@@ -55,6 +66,9 @@ final class Settings {
         e.putInt("touchMode", touchMode);
         for (int i = 0; i < 4; i++) e.putInt("src" + i, src[i]);
         e.putBoolean("forceUsb", forceUsb);
+        for (int i = 0; i < 3; i++) e.putInt("gyroMap" + i, gyroMap[i]);
+        e.putBoolean("accelFollows", accelFollows);
+        e.putInt("gyroGain", gyroGain).putInt("gyroInvert", gyroInvert);
         e.putInt("lightR", lightR).putInt("lightG", lightG).putInt("lightB", lightB);
         e.putInt("brightness", brightness).putInt("player", player);
         e.apply();

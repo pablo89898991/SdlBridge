@@ -112,8 +112,20 @@ public class BridgeService extends Service implements NativeBridge.Listener {
         b.putInt("lx", (int) f[1]); b.putInt("ly", (int) f[2]);
         b.putInt("rx", (int) f[3]); b.putInt("ry", (int) f[4]);
         b.putInt("l2", (int) f[5]); b.putInt("r2", (int) f[6]);
-        b.putFloatArray("gyro", new float[]{f[7] * RAD_TO_DEG, f[8] * RAD_TO_DEG, f[9] * RAD_TO_DEG}); // deg/s
-        b.putFloatArray("accel", new float[]{f[10] / G, f[11] / G, f[12] / G});                         // g
+        float gk = Settings.gyroGain / 100f;
+        int inv = Settings.gyroInvert;
+        float[] gy = {f[7] * RAD_TO_DEG, f[8] * RAD_TO_DEG, f[9] * RAD_TO_DEG};   // deg/s
+        float[] ac = {f[10] / G, f[11] / G, f[12] / G};                          // g
+        float[] go = new float[3], ao = new float[3];
+        for (int i = 0; i < 3; i++) {
+            float sign = (inv & (1 << i)) != 0 ? -1f : 1f;
+            int src = Settings.gyroMap[i];
+            go[i] = gy[src] * gk * sign;
+            ao[i] = Settings.accelFollows ? ac[src] * sign : ac[i];
+        }
+        b.putFloatArray("gyro", go);
+        b.putFloatArray("accel", ao);
+
 
         // Raw fingers (kept for older clients) ...
         List<Integer> t = new ArrayList<>();

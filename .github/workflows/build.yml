@@ -70,7 +70,7 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          cp app/build/outputs/apk/debug/app-debug.apk DualSenseBridge-SDL3.apk
-          gh release create "build-${{ github.run_number }}" DualSenseBridge-SDL3.apk \
+          cp app/build/outputs/apk/debug/app-debug.apk SDL3BridgeDroidDeck.apk
+          gh release create "build-${{ github.run_number }}" SDL3BridgeDroidDeck.apk \
             --title "Bridge build ${{ github.run_number }} (SDL ${{ steps.sdl.outputs.tag }})" \
             --notes "sdl=${{ steps.sdl.outputs.tag }}" --latest

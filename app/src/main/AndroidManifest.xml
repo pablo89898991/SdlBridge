@@ -15,7 +15,7 @@
     <permission android:name="com.example.dsedge.permission.BRIDGE" android:protectionLevel="normal" />
 
     <application
-        android:label="DualSense Bridge (SDL3)"
+        android:label="SDL3BridgeDroidDeck"
         android:theme="@android:style/Theme.NoTitleBar.Fullscreen"
         android:hardwareAccelerated="true">
 
