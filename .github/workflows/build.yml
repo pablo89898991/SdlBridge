@@ -1,0 +1,74 @@
+name: Build SDL3 bridge APK
+on:
+  push:
+  workflow_dispatch:
+  schedule:
+    - cron: '17 5 * * 1'   # every Monday: rebuild only if SDL has a newer stable release
+permissions:
+  contents: write           # needed to publish the release the app's updater reads
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Find latest SDL release
+        id: sdl
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          TAG=$(gh api repos/libsdl-org/SDL/releases/latest --jq .tag_name)
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+          BUILD=true
+          if [ "${{ github.event_name }}" = "schedule" ]; then
+            LAST=$(gh release view --repo "$GITHUB_REPOSITORY" --json body --jq .body 2>/dev/null | grep -o 'sdl=[^ ]*' | head -1 | cut -d= -f2 || true)
+            echo "Last released SDL: ${LAST:-none}, latest SDL: $TAG"
+            if [ "$LAST" = "$TAG" ]; then BUILD=false; fi
+          fi
+          echo "build=$BUILD" >> "$GITHUB_OUTPUT"
+
+      - uses: actions/setup-java@v5
+        if: steps.sdl.outputs.build == 'true'
+        with: { distribution: temurin, java-version: 17 }
+
+      - name: Accept Android licenses
+        if: steps.sdl.outputs.build == 'true'
+        run: yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --licenses || true
+
+      - name: Fetch SDL3 and its Android Java classes
+        if: steps.sdl.outputs.build == 'true'
+        run: |
+          git clone --depth 1 --branch "${{ steps.sdl.outputs.tag }}" https://github.com/libsdl-org/SDL app/jni/SDL
+          mkdir -p app/src/main/java
+          cp -r app/jni/SDL/android-project/app/src/main/java/org app/src/main/java/
+
+      - name: Stamp build info (read by the in-app updater)
+        if: steps.sdl.outputs.build == 'true'
+        run: |
+          mkdir -p app/src/main/assets
+          printf 'repo=%s\ntag=build-%s\nsdl=%s\n' "$GITHUB_REPOSITORY" "${{ github.run_number }}" "${{ steps.sdl.outputs.tag }}" > app/src/main/assets/build.txt
+          cat app/src/main/assets/build.txt
+
+      - uses: gradle/actions/setup-gradle@v4
+        if: steps.sdl.outputs.build == 'true'
+        with: { gradle-version: "8.9" }
+
+      - name: Build APK
+        if: steps.sdl.outputs.build == 'true'
+        run: gradle :app:assembleDebug --no-daemon -Pvc=${{ github.run_number }}
+
+      - uses: actions/upload-artifact@v4
+        if: steps.sdl.outputs.build == 'true'
+        with:
+          name: SdlBridge-debug-apk
+          path: app/build/outputs/apk/debug/app-debug.apk
+
+      - name: Publish release
+        if: steps.sdl.outputs.build == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          cp app/build/outputs/apk/debug/app-debug.apk DualSenseBridge-SDL3.apk
+          gh release create "build-${{ github.run_number }}" DualSenseBridge-SDL3.apk \
+            --title "Bridge build ${{ github.run_number }} (SDL ${{ steps.sdl.outputs.tag }})" \
+            --notes "sdl=${{ steps.sdl.outputs.tag }}" --latest
