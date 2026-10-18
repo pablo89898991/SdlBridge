@@ -121,18 +121,45 @@ static void send_frame(JNIEnv *env, SDL_Gamepad *pad, jfloatArray arr)
     (*env)->CallStaticVoidMethod(env, g_cls, g_frame, arr);
 }
 
+/* SDL's own USB driver gives the gamepad a device path; Android's basic input path does not.
+ * Only the USB driver provides gyro, touchpad and the Edge back buttons. */
+static bool pad_is_full_driver(SDL_Gamepad *pad) { return SDL_GetGamepadPath(pad) != NULL; }
+
+static void enable_sensors(SDL_Gamepad *pad)
+{
+    static const SDL_SensorType types[] = { SDL_SENSOR_GYRO, SDL_SENSOR_ACCEL };
+    for (size_t i = 0; i < SDL_arraysize(types); i++) {
+        if (SDL_GamepadHasSensor(pad, types[i]) && !SDL_GamepadSensorEnabled(pad, types[i])) {
+            SDL_SetGamepadSensorEnabled(pad, types[i], true);
+        }
+    }
+}
+
+static void describe(SDL_Gamepad *pad, char *buf, size_t n)
+{
+    const char *name = SDL_GetGamepadName(pad);
+    SDL_JoystickConnectionState cs = SDL_GetGamepadConnectionState(pad);
+    snprintf(buf, n, "Connected: %s [%s] %04x:%04x %s | gyro:%s accel:%s touchpads:%d",
+             name ? name : "gamepad",
+             pad_is_full_driver(pad) ? "USB driver: full features" : "Android basic input: NO gyro or back buttons",
+             (unsigned)SDL_GetGamepadVendor(pad), (unsigned)SDL_GetGamepadProduct(pad),
+             cs == SDL_JOYSTICK_CONNECTION_WIRED ? "wired" : (cs == SDL_JOYSTICK_CONNECTION_WIRELESS ? "wireless" : "link unknown"),
+             SDL_GamepadHasSensor(pad, SDL_SENSOR_GYRO) ? "yes" : "no",
+             SDL_GamepadHasSensor(pad, SDL_SENSOR_ACCEL) ? "yes" : "no",
+             SDL_GetNumGamepadTouchpads(pad));
+}
+
+static char g_last_diag[320];
+
 static SDL_Gamepad *open_pad(JNIEnv *env, SDL_JoystickID id, SDL_JoystickID *out_id)
 {
     SDL_Gamepad *pad = SDL_OpenGamepad(id);
     if (!pad) return NULL;
     *out_id = id;
-    if (SDL_GamepadHasSensor(pad, SDL_SENSOR_GYRO)) SDL_SetGamepadSensorEnabled(pad, SDL_SENSOR_GYRO, true);
-    if (SDL_GamepadHasSensor(pad, SDL_SENSOR_ACCEL)) SDL_SetGamepadSensorEnabled(pad, SDL_SENSOR_ACCEL, true);
+    enable_sensors(pad);
     atomic_store(&g_dirty, 1); /* re-apply lightbar */
-    char msg[200];
-    const char *name = SDL_GetGamepadName(pad);
-    snprintf(msg, sizeof(msg), "Connected: %s", name ? name : "gamepad");
-    send_status(env, msg);
+    describe(pad, g_last_diag, sizeof(g_last_diag));
+    send_status(env, g_last_diag);
     return pad;
 }
 
@@ -157,14 +184,20 @@ int main(int argc, char *argv[])
     jfloatArray arr = (*env)->NewFloatArray(env, FRAME_LEN);
     SDL_Gamepad *pad = NULL;
     SDL_JoystickID pad_id = 0;
-    Uint64 last_scan = 0, last_rumble = 0;
+    Uint64 last_scan = 0, last_rumble = 0, last_tick = 0;
     int rumble_on = 0;
 
     for (;;) {
         SDL_Event e;
         while (SDL_PollEvent(&e)) {
-            if (e.type == SDL_EVENT_GAMEPAD_ADDED && !pad) {
-                pad = open_pad(env, e.gdevice.which, &pad_id);
+            if (e.type == SDL_EVENT_GAMEPAD_ADDED) {
+                if (!pad) {
+                    pad = open_pad(env, e.gdevice.which, &pad_id);
+                } else if (!pad_is_full_driver(pad) && SDL_GetGamepadPathForID(e.gdevice.which) != NULL) {
+                    /* The USB driver showed up after the basic Android device: switch to it. */
+                    SDL_CloseGamepad(pad);
+                    pad = open_pad(env, e.gdevice.which, &pad_id);
+                }
             } else if (e.type == SDL_EVENT_GAMEPAD_REMOVED && pad && e.gdevice.which == pad_id) {
                 SDL_CloseGamepad(pad);
                 pad = NULL;
@@ -180,6 +213,31 @@ int main(int argc, char *argv[])
             SDL_JoystickID *ids = SDL_GetGamepads(&n);
             if (ids && n > 0) pad = open_pad(env, ids[0], &pad_id);
             SDL_free(ids);
+        }
+
+        if (pad && now - last_tick > 1000) {
+            last_tick = now;
+            enable_sensors(pad);
+            if (!pad_is_full_driver(pad)) { /* look for the full USB driver version of the same controller */
+                int n = 0;
+                SDL_JoystickID *ids = SDL_GetGamepads(&n);
+                for (int i = 0; ids && i < n; i++) {
+                    if (ids[i] != pad_id && SDL_GetGamepadPathForID(ids[i]) != NULL) {
+                        SDL_CloseGamepad(pad);
+                        pad = open_pad(env, ids[i], &pad_id);
+                        break;
+                    }
+                }
+                SDL_free(ids);
+            }
+            if (pad) {
+                char diag[320];
+                describe(pad, diag, sizeof(diag));
+                if (strcmp(diag, g_last_diag) != 0) {
+                    SDL_strlcpy(g_last_diag, diag, sizeof(g_last_diag));
+                    send_status(env, diag);
+                }
+            }
         }
 
         if (pad) {

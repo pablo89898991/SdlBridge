@@ -2,6 +2,8 @@ package com.example.dsedge;
 
 import android.content.Intent;
 import android.graphics.Color;
+import android.hardware.usb.UsbDevice;
+import android.hardware.usb.UsbManager;
 import android.net.Uri;
 import android.os.Bundle;
 import android.os.Handler;
@@ -22,7 +24,7 @@ import org.libsdl.app.SDLActivity;
  */
 public class BridgeActivity extends SDLActivity implements NativeBridge.Listener {
     private final Handler ui = new Handler(Looper.getMainLooper());
-    private TextView statusView, summaryView;
+    private TextView statusView, summaryView, usbView;
     private Button updateButton;
     private ControllerView pad;
     private String updateUrl;
@@ -43,6 +45,7 @@ public class BridgeActivity extends SDLActivity implements NativeBridge.Listener
         root.setPadding(16, 24, 16, 16);
 
         statusView = text("DualSense Bridge (SDL3)  " + info.tag + "  SDL " + info.sdl + "\n" + NativeBridge.lastStatus, 13f);
+        usbView = text("USB: checking...", 12f);
         summaryView = text("Press every button and move everything to test it.", 12f);
         pad = new ControllerView(this);
 
@@ -56,6 +59,7 @@ public class BridgeActivity extends SDLActivity implements NativeBridge.Listener
         row.addView(button("Update", v -> checkUpdate()), weight());
 
         root.addView(statusView);
+        root.addView(usbView);
         root.addView(pad, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
         root.addView(summaryView);
         root.addView(row);
@@ -73,6 +77,7 @@ public class BridgeActivity extends SDLActivity implements NativeBridge.Listener
             startForegroundService(new Intent(this, BridgeService.class));
         } catch (RuntimeException ignored) { }
         checkUpdate();
+        ui.post(usbRefresh);
     }
 
     private TextView text(String s, float size) {
@@ -95,6 +100,34 @@ public class BridgeActivity extends SDLActivity implements NativeBridge.Listener
 
     private static LinearLayout.LayoutParams weight() {
         return new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f);
+    }
+
+    // ---------- USB diagnostics ----------
+
+    private final Runnable usbRefresh = new Runnable() {
+        @Override public void run() {
+            usbView.setText(usbInfo());
+            ui.postDelayed(this, 2000);
+        }
+    };
+
+    /** Android's view of the controller on USB: is it there, and may this app talk to it? */
+    private String usbInfo() {
+        try {
+            UsbManager um = (UsbManager) getSystemService(USB_SERVICE);
+            StringBuilder sb = new StringBuilder("USB: ");
+            boolean any = false;
+            for (UsbDevice d : um.getDeviceList().values()) {
+                if (d.getVendorId() != 0x054C) continue;
+                any = true;
+                sb.append(String.format(java.util.Locale.ROOT, "Sony %04x:%04x access=%s  ",
+                        d.getVendorId(), d.getProductId(), um.hasPermission(d) ? "yes" : "NO (unplug and replug, tap OK)"));
+            }
+            if (!any) sb.append("no Sony controller on USB (use a USB-C data cable)");
+            return sb.toString();
+        } catch (RuntimeException e) {
+            return "USB: unavailable";
+        }
     }
 
     // ---------- tests ----------
@@ -139,6 +172,7 @@ public class BridgeActivity extends SDLActivity implements NativeBridge.Listener
     // ---------- SDL USB handling ----------
 
     @Override protected void onDestroy() {
+        ui.removeCallbacks(usbRefresh);
         NativeBridge.listeners.remove(this);
         super.onDestroy();
     }
