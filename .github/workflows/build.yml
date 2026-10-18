@@ -41,6 +41,7 @@ jobs:
           git clone --depth 1 --branch "${{ steps.sdl.outputs.tag }}" https://github.com/libsdl-org/SDL app/jni/SDL
           mkdir -p app/src/main/java
           cp -r app/jni/SDL/android-project/app/src/main/java/org app/src/main/java/
+          find app/jni/SDL -name 'gradle-wrapper.jar' -delete
 
       - name: Stamp build info (read by the in-app updater)
         if: steps.sdl.outputs.build == 'true'
