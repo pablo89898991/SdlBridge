@@ -178,7 +178,10 @@ public class ControllerView extends View {
         for (int i = 0; i < 2; i++) {
             if (f[13 + 3 * i] > 0.5f) {
                 fill.setColor(i == 0 ? 0xFFFFFFFF : 0xFF4FC3F7);
-                c.drawCircle(36 + f[14 + 3 * i] / 1919f * 28f, 12 + f[15 + 3 * i] / 1079f * 22f, 1.8f, fill);
+                float px = f[14 + 3 * i] / 1919f, py = f[15 + 3 * i] / 1079f;
+                if (Settings.touchInvX) px = 1f - px; // dots show what DroidDeck receives
+                if (Settings.touchInvY) py = 1f - py;
+                c.drawCircle(36 + px * 28f, 12 + py * 22f, 1.8f, fill);
             }
         }
 
