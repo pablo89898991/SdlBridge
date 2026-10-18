@@ -22,7 +22,7 @@ import java.util.concurrent.CopyOnWriteArrayList;
 
 /**
  * Streams controller frames (from the SDL3 loop) to bound clients such as DroidDeck, and passes their
- * rumble / lightbar requests back. Wire protocol is identical to the first (USB) bridge.
+ * rumble / lightbar requests back. Same wire protocol as the first bridge, plus decoupled touchpad data.
  */
 public class BridgeService extends Service implements NativeBridge.Listener {
     static final int MSG_REGISTER = 1;
@@ -33,9 +33,9 @@ public class BridgeService extends Service implements NativeBridge.Listener {
 
     private static final float RAD_TO_DEG = 57.29578f;
     private static final float G = 9.80665f;
+    private static final float PAD_W = 1920f, PAD_H = 1080f;
 
     private final CopyOnWriteArrayList<Messenger> clients = new CopyOnWriteArrayList<>();
-    private int rumbleStrong, rumbleWeak, lr, lg, lb = 255;
 
     private final Handler handler = new Handler(Looper.getMainLooper()) {
         @Override public void handleMessage(Message m) {
@@ -56,6 +56,7 @@ public class BridgeService extends Service implements NativeBridge.Listener {
 
     @Override public void onCreate() {
         super.onCreate();
+        Settings.init(this);
         NativeBridge.listeners.add(this);
     }
 
@@ -85,15 +86,15 @@ public class BridgeService extends Service implements NativeBridge.Listener {
 
     private void mergeOutput(Bundle b) {
         if (b == null) return;
-        if (b.containsKey("rl")) rumbleStrong = clamp(b.getInt("rl"));
-        if (b.containsKey("rr")) rumbleWeak = clamp(b.getInt("rr"));
-        if (b.containsKey("r")) lr = clamp(b.getInt("r"));
-        if (b.containsKey("g")) lg = clamp(b.getInt("g"));
-        if (b.containsKey("b")) lb = clamp(b.getInt("b"));
-        try {
-            NativeBridge.nativeSetOutput(rumbleStrong, rumbleWeak, lr, lg, lb);
-        } catch (UnsatisfiedLinkError e) {
-            // The bridge screen has not been opened yet, so the native library is not loaded.
+        if (b.containsKey("rl") || b.containsKey("rr")) {
+            NativeBridge.setRumble(clamp(b.getInt("rl")), clamp(b.getInt("rr")));
+        }
+        // A client that sets the lightbar overrides the saved colour until the bridge screen changes it again.
+        if (b.containsKey("r") || b.containsKey("g") || b.containsKey("b")) {
+            if (b.containsKey("r")) Settings.lightR = clamp(b.getInt("r"));
+            if (b.containsKey("g")) Settings.lightG = clamp(b.getInt("g"));
+            if (b.containsKey("b")) Settings.lightB = clamp(b.getInt("b"));
+            NativeBridge.applyOutput();
         }
     }
 
@@ -106,12 +107,15 @@ public class BridgeService extends Service implements NativeBridge.Listener {
         Bundle b = new Bundle();
         b.putByteArray("raw", new byte[0]);
         b.putLong("t", SystemClock.elapsedRealtimeNanos());
-        b.putInt("mask", (int) f[0]);
+        int mask = (int) f[0]; // already includes the L4/R4/L5/R5 remapping
+        b.putInt("mask", mask);
         b.putInt("lx", (int) f[1]); b.putInt("ly", (int) f[2]);
         b.putInt("rx", (int) f[3]); b.putInt("ry", (int) f[4]);
         b.putInt("l2", (int) f[5]); b.putInt("r2", (int) f[6]);
         b.putFloatArray("gyro", new float[]{f[7] * RAD_TO_DEG, f[8] * RAD_TO_DEG, f[9] * RAD_TO_DEG}); // deg/s
         b.putFloatArray("accel", new float[]{f[10] / G, f[11] / G, f[12] / G});                         // g
+
+        // Raw fingers (kept for older clients) ...
         List<Integer> t = new ArrayList<>();
         for (int i = 0; i < 2; i++) {
             if (f[13 + 3 * i] > 0.5f) { t.add(i + 1); t.add((int) f[14 + 3 * i]); t.add((int) f[15 + 3 * i]); }
@@ -119,7 +123,35 @@ public class BridgeService extends Service implements NativeBridge.Listener {
         int[] touch = new int[t.size()];
         for (int i = 0; i < touch.length; i++) touch[i] = t.get(i);
         b.putIntArray("touch", touch);
+
+        // ... and the decoupled version: each half is its own trackpad with local -1..1 coordinates.
+        float[] padL = new float[3], padR = new float[3];
+        int mode = Settings.touchMode;
+        if (mode != Settings.TOUCH_OFF) {
+            for (int i = 0; i < 2; i++) {
+                if (f[13 + 3 * i] <= 0.5f) continue;
+                float x = f[14 + 3 * i], y = f[15 + 3 * i];
+                float ny = y / PAD_H * 2f - 1f;
+                if (mode == Settings.TOUCH_SINGLE) {
+                    if (padR[0] == 0f) { padR[0] = 1f; padR[1] = x / PAD_W * 2f - 1f; padR[2] = ny; }
+                } else if (x < PAD_W / 2f) {
+                    if (padL[0] == 0f) { padL[0] = 1f; padL[1] = x / (PAD_W / 2f) * 2f - 1f; padL[2] = ny; }
+                } else {
+                    if (padR[0] == 0f) { padR[0] = 1f; padR[1] = (x - PAD_W / 2f) / (PAD_W / 2f) * 2f - 1f; padR[2] = ny; }
+                }
+            }
+        }
+        int click = -1; // -1 none, 0 left trackpad, 1 right trackpad
+        if (((mask >> 13) & 1) != 0 && mode != Settings.TOUCH_OFF) {
+            click = (mode == Settings.TOUCH_SPLIT && padL[0] > 0f && padR[0] == 0f) ? 0 : 1;
+        }
+        b.putFloatArray("padL", padL);
+        b.putFloatArray("padR", padR);
+        b.putInt("padClick", click);
+
         int state = (int) f[20];
+        b.putInt("vid", NativeBridge.vid);
+        b.putInt("pid", NativeBridge.pid);
         b.putInt("battery", Math.max(0, (int) f[19]));
         b.putString("charge", state == 3 ? "charging" : state == 4 ? "full" : state == 1 ? "discharging" : "unknown");
         for (Messenger c : clients) {

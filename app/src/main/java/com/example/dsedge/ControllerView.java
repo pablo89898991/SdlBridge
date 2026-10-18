@@ -165,7 +165,16 @@ public class ControllerView extends View {
         c.drawRoundRect(rect, 2f, 2f, fill);
         stroke.setColor(LINE);
         c.drawRoundRect(rect, 2f, 2f, stroke);
-        label(c, "touchpad", 50, 32.5f, 2f);
+        if (Settings.touchMode == Settings.TOUCH_SPLIT) {
+            stroke.setColor(LINE);
+            c.drawLine(50, 12, 50, 34, stroke);
+            label(c, "L pad", 43, 32.5f, 2f);
+            label(c, "R pad", 57, 32.5f, 2f);
+        } else if (Settings.touchMode == Settings.TOUCH_OFF) {
+            label(c, "touchpad off", 50, 32.5f, 2f);
+        } else {
+            label(c, "R pad (whole)", 50, 32.5f, 2f);
+        }
         for (int i = 0; i < 2; i++) {
             if (f[13 + 3 * i] > 0.5f) {
                 fill.setColor(i == 0 ? 0xFFFFFFFF : 0xFF4FC3F7);

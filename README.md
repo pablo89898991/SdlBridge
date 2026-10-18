@@ -9,6 +9,14 @@ Opening the app shows a live controller diagram. Orange = held now, green = work
 grey = not tested yet. A summary line counts buttons and shows sticks / triggers / gyro / accel / touchpad.
 Buttons: Rumble (0.7 s), Light (cycles lightbar colours), Reset (clear green marks), Update.
 
+## Settings (on the bridge screen)
+- **Touchpad layout**: Split (decoupled: left half = left trackpad, right half = right trackpad, click goes to the
+  side you touch), Single (whole pad = right trackpad), or Off. The diagram shows the split.
+- **Extra buttons**: L4 / R4 / L5 / R5 can also be pressed by Mute, touchpad click, Create, Options, L3 or R3. The
+  real Edge back / Fn buttons always count. A button assigned this way stops acting as itself.
+- **Light**: red / green / blue, brightness, player LEDs. Saved, applied on connect. A client that sets the
+  lightbar (DroidDeck) overrides it until you change it here again.
+
 ## Updates
 - Every push builds an APK and publishes it as a GitHub Release (`build-N`, notes contain `sdl=<version>`).
 - A weekly scheduled run checks the latest stable SDL3 release and publishes a new build only when it changed.
@@ -32,3 +40,12 @@ from the run's Artifacts, or from the repo's Releases.
 - Adaptive trigger effects are not implemented; rumble and lightbar are.
 - The bridge screen must be opened once per phone boot; it cannot launch itself from the background.
 - Untested: written without being able to build or run it. Report the first error.
+
+## Forced SDL3 USB driver
+
+Settings -> "SDL3 driver":
+- **Forced** (default): the bridge ignores Android's basic input and only uses controllers served by SDL3's own USB (HIDAPI) driver. That is the only mode with Edge back buttons/Fn, touchpad data, lightbar and gyro from the controller itself. It needs a USB-C cable; Bluetooth cannot work.
+- **Auto**: also accepts Android basic input.
+- **Force SDL3 USB driver** button: asks Android for USB access to every controller-like USB device (using SDL's own permission action), then restarts SDL's gamepad enumeration. Pick "always" in the dialog.
+
+The status line says "Forced SDL3 USB mode: waiting..." until SDL's driver has the controller.
