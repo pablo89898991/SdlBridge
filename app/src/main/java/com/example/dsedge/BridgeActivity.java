@@ -44,6 +44,7 @@ public class BridgeActivity extends SDLActivity implements NativeBridge.Listener
     private volatile int calibCount = -1;              // -1 = not calibrating
     private final float[] calibSum = new float[3];
     private TextView gyroCalibView;
+    private boolean pendingBubble;   // user asked for the bubble; waiting for overlay permission
 
     @Override protected String[] getLibraries() {
         return new String[] { "SDL3", "main" };
@@ -127,11 +128,12 @@ public class BridgeActivity extends SDLActivity implements NativeBridge.Listener
         addCheck(root, "Show floating bubble over other apps", Settings.bubble, on -> {
             if (on) {
                 if (!android.provider.Settings.canDrawOverlays(this)) {
+                    pendingBubble = true;   // enable automatically once permission is granted
                     try {
                         startActivity(new Intent(android.provider.Settings.ACTION_MANAGE_OVERLAY_PERMISSION,
                                 Uri.parse("package:" + getPackageName())));
                     } catch (RuntimeException ignored) { }
-                    return; // grant permission, then toggle again
+                    return;
                 }
                 Settings.bubble = true;
                 startService(new Intent(this, BridgeService.class).setAction("BUBBLE").putExtra("on", true));
@@ -364,6 +366,20 @@ public class BridgeActivity extends SDLActivity implements NativeBridge.Listener
             if (c == 255 || (c == 3 && f.getInterfaceProtocol() == 0)) return true; // vendor-specific (Xbox) or generic HID
         }
         return false;
+    }
+
+    @Override protected void onResume() {
+        super.onResume();
+        if (android.provider.Settings.canDrawOverlays(this)) {
+            if (pendingBubble) {
+                pendingBubble = false;
+                Settings.bubble = true;
+                Settings.save();
+            }
+            if (Settings.bubble) {
+                startService(new Intent(this, BridgeService.class).setAction("BUBBLE").putExtra("on", true));
+            }
+        }
     }
 
     @Override protected void onPause() {

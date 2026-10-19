@@ -49,6 +49,11 @@ branch, so `main` is never overwritten.
     git commit -m "SDL3 bridge tooling"
     git push -u origin sdl3deck
 
+Add the token secret (one time), because GitHub forbids the built-in token from pushing workflow files:
+
+- GitHub -> your fork -> **Settings -> Secrets and variables -> Actions -> New repository secret**
+- Name: `SYNC_PAT`  Value: a Personal Access Token with **repo** + **workflow** scope (the same kind you push with from Termux).
+
 Then on GitHub: **Actions -> Sync upstream + patch -> Run workflow**. It fills `sdl3deck` with
 "latest upstream + bridge + SDL3Deck name" and triggers Build APK on that branch. After that it runs
 daily on its own. Grab the APK from the Build APK run on `sdl3deck`.
