@@ -46,15 +46,16 @@ public class BridgeService extends Service implements NativeBridge.Listener {
     private static final float PAD_W = 1920f, PAD_H = 1080f;
 
     private final CopyOnWriteArrayList<Messenger> clients = new CopyOnWriteArrayList<>();
+    static volatile int clientCount;   // how many clients (DroidDeck) are bound + registered
 
     private final Handler handler = new Handler(Looper.getMainLooper()) {
         @Override public void handleMessage(Message m) {
             switch (m.what) {
                 case MSG_REGISTER:
-                    if (m.replyTo != null) { clients.add(m.replyTo); sendStatus(m.replyTo, NativeBridge.lastStatus); }
+                    if (m.replyTo != null) { clients.add(m.replyTo); clientCount = clients.size(); sendStatus(m.replyTo, NativeBridge.lastStatus); }
                     break;
                 case MSG_UNREGISTER:
-                    if (m.replyTo != null) clients.remove(m.replyTo);
+                    if (m.replyTo != null) { clients.remove(m.replyTo); clientCount = clients.size(); }
                     break;
                 case MSG_OUTPUT:
                     mergeOutput(m.getData());
@@ -303,7 +304,7 @@ public class BridgeService extends Service implements NativeBridge.Listener {
                 Message m = Message.obtain(null, MSG_FRAME);
                 m.setData(b);
                 c.send(m);
-            } catch (RemoteException e) { clients.remove(c); }
+            } catch (RemoteException e) { clients.remove(c); clientCount = clients.size(); }
         }
     }
 

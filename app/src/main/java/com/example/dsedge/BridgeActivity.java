@@ -273,7 +273,8 @@ public class BridgeActivity extends SDLActivity implements NativeBridge.Listener
 
     private final Runnable usbRefresh = new Runnable() {
         @Override public void run() {
-            usbView.setText(usbInfo());
+            int n = BridgeService.clientCount;
+            usbView.setText(usbInfo() + "\nDroidDeck link: " + (n > 0 ? (n + " app(s) bound — sending frames") : "NOT bound (open a DroidDeck game session)"));
             ui.postDelayed(this, 2000);
         }
     };
