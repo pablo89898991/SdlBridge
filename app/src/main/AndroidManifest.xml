@@ -37,10 +37,12 @@
                        android:resource="@xml/device_filter" />
         </activity>
 
+        <!-- No android:permission here on purpose: requiring the custom permission to bind breaks when the
+             bridge is reinstalled (Android orphans a 'normal' custom-permission grant until the client is also
+             reinstalled). DroidDeck still finds us via its <queries> entry; the controller data is local only. -->
         <service
             android:name=".BridgeService"
             android:exported="true"
-            android:permission="com.example.dsedge.permission.BRIDGE"
             android:foregroundServiceType="specialUse">
             <property android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
                       android:value="game controller bridge to another app" />
