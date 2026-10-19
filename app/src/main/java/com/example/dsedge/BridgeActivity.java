@@ -442,7 +442,13 @@ public class BridgeActivity extends SDLActivity implements NativeBridge.Listener
     }
 
     private void keepControllerClaimed() {
-        if (mHIDDeviceManager != null) mHIDDeviceManager.setFrozen(false);
+        // When the driver is off, let go of the controller (freeze = release the USB interface) so Android can use it.
+        if (mHIDDeviceManager != null) mHIDDeviceManager.setFrozen(!Settings.driverEnabled);
+    }
+
+    /** Called from the service when the bubble toggles the driver: release or re-claim the USB interface. */
+    static void setHidFrozen(boolean frozen) {
+        if (mHIDDeviceManager != null) mHIDDeviceManager.setFrozen(frozen);
     }
 
     // ---------- NativeBridge.Listener ----------

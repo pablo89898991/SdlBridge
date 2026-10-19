@@ -205,6 +205,7 @@ public class BridgeService extends Service implements NativeBridge.Listener {
         if (Settings.driverEnabled) Settings.forceUsb = true;   // on = forced SDL3 USB
         Settings.save();
         NativeBridge.applyDriver();
+        try { BridgeActivity.setHidFrozen(!Settings.driverEnabled); } catch (Throwable ignored) { }
         updateBubble();
     }
 
