@@ -39,6 +39,11 @@ public class BridgeActivity extends SDLActivity implements NativeBridge.Listener
     private ControllerView pad;
     private String updateUrl;
     private long lastSummary;
+    private static final float RAD_TO_DEG = 57.29578f;
+    private static final int CALIB_SAMPLES = 180;      // ~0.7s at 4ms/frame
+    private volatile int calibCount = -1;              // -1 = not calibrating
+    private final float[] calibSum = new float[3];
+    private TextView gyroCalibView;
 
     @Override protected String[] getLibraries() {
         return new String[] { "SDL3", "main" };
@@ -106,6 +111,37 @@ public class BridgeActivity extends SDLActivity implements NativeBridge.Listener
             Settings.save();
         });
         root.addView(text("Takes effect immediately. If aiming feels too slow, raise it; if an axis moves the wrong way, invert it.", 11f));
+        addSlider(root, "Gyro deadzone (deg/s)", 50, Settings.gyroDeadzone, v -> Settings.gyroDeadzone = v);
+        gyroCalibView = text(calibLabel(), 11f);
+        LinearLayout gcrow = new LinearLayout(this);
+        gcrow.setOrientation(LinearLayout.HORIZONTAL);
+        gcrow.addView(button("Calibrate (hold still)", v -> startGyroCalibration()), weight());
+        gcrow.addView(button("Reset calibration", v -> resetGyroCalibration()), weight());
+        root.addView(gcrow);
+        root.addView(gyroCalibView);
+        root.addView(text("Deadzone ignores tiny gyro motion so the view does not drift when you hold still. "
+                + "Calibrate: lay the controller flat and still, then tap; it measures the resting drift and subtracts it.", 11f));
+
+        // ---- Floating bubble ----
+        root.addView(header("Floating bubble"));
+        addCheck(root, "Show floating bubble over other apps", Settings.bubble, on -> {
+            if (on) {
+                if (!android.provider.Settings.canDrawOverlays(this)) {
+                    try {
+                        startActivity(new Intent(android.provider.Settings.ACTION_MANAGE_OVERLAY_PERMISSION,
+                                Uri.parse("package:" + getPackageName())));
+                    } catch (RuntimeException ignored) { }
+                    return; // grant permission, then toggle again
+                }
+                Settings.bubble = true;
+                startService(new Intent(this, BridgeService.class).setAction("BUBBLE").putExtra("on", true));
+            } else {
+                Settings.bubble = false;
+                startService(new Intent(this, BridgeService.class).setAction("BUBBLE").putExtra("on", false));
+            }
+        });
+        root.addView(text("A draggable bubble (like a chat head) that shows bridge status and opens this screen "
+                + "on tap. Needs the \"Draw over other apps\" permission; if the switch does nothing, grant it and toggle again.", 11f));
 
         // ---- Touchpad ----
         root.addView(header("Touchpad"));
@@ -346,14 +382,49 @@ public class BridgeActivity extends SDLActivity implements NativeBridge.Listener
 
     // ---------- NativeBridge.Listener ----------
 
+    private String calibLabel() {
+        float[] b = Settings.gyroBias;
+        if (b[0] == 0f && b[1] == 0f && b[2] == 0f) return "Calibration: none";
+        return String.format("Calibration bias (deg/s): x=%.2f y=%.2f z=%.2f", b[0], b[1], b[2]);
+    }
+
+    private void startGyroCalibration() {
+        calibSum[0] = calibSum[1] = calibSum[2] = 0f;
+        calibCount = 0;
+        if (gyroCalibView != null) gyroCalibView.setText("Hold the controller still...");
+    }
+
+    private void resetGyroCalibration() {
+        calibCount = -1;
+        Settings.gyroBias[0] = Settings.gyroBias[1] = Settings.gyroBias[2] = 0f;
+        Settings.save();
+        if (gyroCalibView != null) gyroCalibView.setText(calibLabel());
+    }
+
     @Override public void onFrame(float[] f, int slot) {
         if (slot != 0) return; // the test screen shows player 1
+        if (calibCount >= 0 && f.length >= 13) {
+            calibSum[0] += f[7]; calibSum[1] += f[8]; calibSum[2] += f[9];
+            if (++calibCount >= CALIB_SAMPLES) {
+                Settings.gyroBias[0] = calibSum[0] / CALIB_SAMPLES * RAD_TO_DEG;
+                Settings.gyroBias[1] = calibSum[1] / CALIB_SAMPLES * RAD_TO_DEG;
+                Settings.gyroBias[2] = calibSum[2] / CALIB_SAMPLES * RAD_TO_DEG;
+                Settings.save();
+                calibCount = -1;
+                ui.post(() -> { if (gyroCalibView != null) gyroCalibView.setText(calibLabel()); });
+            }
+        }
         pad.update(f);
         long now = System.nanoTime();
         if (now - lastSummary > 300_000_000L) {
             lastSummary = now;
             ui.post(() -> summaryView.setText(pad.summary()));
         }
+    }
+
+    @Override public void onPadCaps(int slot, int present, int axes, int touchpads, String kind) {
+        if (slot != 0) return;
+        pad.setCaps(present, axes, touchpads, kind);
     }
 
     @Override public void onStatus(final String s) {

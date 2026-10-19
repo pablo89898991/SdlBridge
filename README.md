@@ -67,3 +67,49 @@ The bridge opens every SDL3-supported controller it sees (up to 4) and sends eac
 - The Android copy of a controller that SDL already reads through its USB driver is never opened as an extra player.
 - If player 1 is unplugged the next controller moves up to player 1.
 - DroidDeck needs `padbridge-slots.patch` (PadBridge slot API) and the new `DualSenseBridge.kt`.
+
+## One-command DroidDeck integration (droiddeck/patch-droiddeck.sh)
+
+Instead of copying files and applying patches by hand, run the bundled patcher against your DroidDeck
+source tree in Termux:
+
+    bash ~/SdlBridge/droiddeck/patch-droiddeck.sh ~/DroidDeck
+
+It installs DualSenseBridge.kt, adds the PadBridge slot API + duplicate-input gates, the manifest
+permission/queries, and the SessionActivity dispatch gate. It is idempotent (safe to re-run) and prints
+TODO lines for the two things that must be placed by hand once: the `attach()`/`detach()` calls in your
+session start/stop and the `isActive()` guard in PadMotion.kt.
+
+Note: this edits DroidDeck's SOURCE before you build it. An installed app cannot patch another installed
+APK on a non-rooted phone (a re-signed APK no longer matches DroidDeck's signature), so the integration
+has to be compiled into DroidDeck.
+
+## Auto-updating DroidDeck (droiddeck/sync-upstream.yml)
+
+For a DroidDeck APK that always tracks latest upstream with the bridge baked in, see
+droiddeck/SETUP-autoupdate.md. A scheduled workflow re-applies droiddeck/patch-droiddeck.sh to fresh
+upstream and rebuilds -- overwrite, not merge, so no conflicts.
+
+## Gyro deadzone & calibration
+
+In "Gyro (sent to DroidDeck)":
+- **Gyro deadzone (deg/s)**: motion smaller than this is treated as zero, so the view doesn't drift while you hold still. Applied in real deg/s, before the speed %.
+- **Calibrate (hold still)**: lay the controller flat and still, then tap. It samples ~0.7s of gyro, measures the resting drift per axis, and subtracts it from then on. Shown as the bias line; **Reset calibration** clears it.
+
+Both are bridge-side only; no DroidDeck change needed.
+
+## Universal controller test layout
+
+The test screen adapts to whatever SDL3 reports for the connected controller: it draws only the buttons,
+sticks, triggers, touchpad(s) and paddles that actually exist, and labels the face/menu buttons for the
+controller kind (PlayStation ✕●■▲, Xbox A/B/X/Y, Nintendo B/A/Y/X, Steam, generic). Controllers with two
+trackpads (Steam Controller 2015 and 2026) show both pads with separate finger dots. Driven by a
+capability report from the native layer, so new SDL3-supported controllers work without code changes.
+
+## Floating bubble
+
+"Floating bubble" -> "Show floating bubble over other apps": a draggable chat-head style bubble that
+floats over DroidDeck and any app. It shows bridge status (green = a controller is live, grey = waiting),
+you can drag it anywhere (position is remembered), and tapping it opens the bridge screen. Needs the
+Android "Draw over other apps" permission; the first time you enable it, grant the permission then toggle
+it again. Bridge-side only.

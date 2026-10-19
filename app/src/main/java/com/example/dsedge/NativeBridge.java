@@ -9,6 +9,8 @@ public final class NativeBridge {
         void onStatus(String s);
         /** The controller in this slot (0..3) was unplugged. */
         default void onPadGone(int slot) { }
+        /** Capabilities of the controller in this slot: which buttons/axes exist, touchpad count, and kind. */
+        default void onPadCaps(int slot, int present, int axes, int touchpads, String kind) { }
     }
 
     /** Layout of the float[] frame sent from native code. */
@@ -40,6 +42,22 @@ public final class NativeBridge {
         vids[slot] = vid;
         pids[slot] = pid;
         names[slot] = name;
+    }
+
+    /** Capabilities of each slot's controller (present-button mask, axis flags, touchpad count, kind). */
+    static final int[] present = new int[MAX_PADS];
+    static final int[] axesMask = new int[MAX_PADS];
+    static final int[] touchpadCount = new int[MAX_PADS];
+    static final String[] kind = new String[MAX_PADS];
+
+    /** Called from the native SDL thread when a controller is opened in a slot. */
+    static void onPadCaps(int slot, int p, int a, int tp, String k) {
+        if (slot < 0 || slot >= MAX_PADS) return;
+        present[slot] = p;
+        axesMask[slot] = a;
+        touchpadCount[slot] = tp;
+        kind[slot] = k;
+        for (Listener l : listeners) l.onPadCaps(slot, p, a, tp, k);
     }
 
     /** Called from the native SDL thread when a slot's controller goes away. */

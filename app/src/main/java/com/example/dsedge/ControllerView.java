@@ -7,12 +7,20 @@ import android.graphics.RectF;
 import android.view.View;
 
 /**
- * Live gamepad diagram. Orange = held right now, green = has been pressed at least once (works),
- * grey = not tested yet. Fed with the float[] frames from the native SDL loop.
+ * Universal live gamepad diagram for any SDL3 controller (DualSense / Edge, Xbox, Switch Pro,
+ * Steam Controller 2015 &amp; 2026, generic pads). It draws only the controls the controller actually
+ * reports (via NativeBridge caps) and labels the face / menu buttons for the controller kind.
+ *
+ * Orange = held now, green = pressed at least once (works), grey = present but untested.
  */
 public class ControllerView extends View {
     private static final int ORANGE = 0xFFFF9800, GREEN = 0xFF2E7D32, GRAY = 0xFF37474F, LINE = 0xFF90A4AE;
-    private static final int BUTTON_BITS = 23; // bits 0..22 of the frame mask
+
+    // frame-mask bit numbers
+    private static final int B_SOUTH = 0, B_EAST = 1, B_WEST = 2, B_NORTH = 3, B_L1 = 4, B_R1 = 5,
+            B_L2 = 6, B_R2 = 7, B_BACK = 8, B_START = 9, B_L3 = 10, B_R3 = 11, B_GUIDE = 12,
+            B_TOUCH = 13, B_MISC = 14, B_UP = 15, B_DOWN = 16, B_LEFT = 17, B_RIGHT = 18,
+            B_P1 = 19, B_P2 = 20, B_P3 = 21, B_P4 = 22;
 
     // tested-flag bits (not button bits)
     private static final int T_LS = 1, T_RS = 2, T_L2 = 4, T_R2 = 8, T_GYRO = 16, T_ACCEL = 32, T_TOUCH = 64;
@@ -29,6 +37,12 @@ public class ControllerView extends View {
     private volatile boolean connected;
     private long lastInvalidate;
 
+    // capabilities (default: assume everything until the controller reports otherwise)
+    private volatile int present = (1 << 23) - 1;
+    private volatile int axes = 0xF;
+    private volatile int touchpads = 1;
+    private volatile String kind = "generic";
+
     public ControllerView(Context c) {
         super(c);
         setBackgroundColor(0xFF111111);
@@ -37,6 +51,15 @@ public class ControllerView extends View {
         text.setTextAlign(Paint.Align.CENTER);
         text.setColor(0xFFECEFF1);
         frame[1] = frame[2] = frame[3] = frame[4] = 128f;
+    }
+
+    /** Capabilities of the displayed controller, from the native layer. */
+    public void setCaps(int present, int axes, int touchpads, String kind) {
+        this.present = present;
+        this.axes = axes;
+        this.touchpads = touchpads;
+        this.kind = kind == null ? "generic" : kind;
+        postInvalidate();
     }
 
     /** Called from any thread with each native frame. */
@@ -64,27 +87,35 @@ public class ControllerView extends View {
         }
     }
 
-    public void setDisconnected() {
-        connected = false;
-        mask = 0;
-        postInvalidate();
-    }
+    public void setDisconnected() { connected = false; mask = 0; postInvalidate(); }
 
-    public void resetTested() {
-        testedButtons = 0;
-        testedFlags = 0;
-        postInvalidate();
-    }
+    public void resetTested() { testedButtons = 0; testedFlags = 0; postInvalidate(); }
 
-    /** One-line summary of what has been verified so far. */
+    /** One-line summary of what has been verified so far (only counts controls the pad has). */
     public String summary() {
+        int p = present & ((1 << 23) - 1);
+        int n = Integer.bitCount(p);
+        int done = Integer.bitCount(testedButtons & p);
         int t = testedFlags;
-        return "Tested: buttons " + Integer.bitCount(testedButtons & ((1 << BUTTON_BITS) - 1)) + "/" + BUTTON_BITS
-                + "  sticks " + mark((t & T_LS) != 0 && (t & T_RS) != 0)
-                + "  triggers " + mark((t & T_L2) != 0 && (t & T_R2) != 0)
-                + "  gyro " + mark((t & T_GYRO) != 0)
-                + "  accel " + mark((t & T_ACCEL) != 0)
-                + "  touchpad " + mark((t & T_TOUCH) != 0);
+        StringBuilder sb = new StringBuilder("Tested: buttons ").append(done).append('/').append(n);
+        if ((axes & 1) != 0 || (axes & 2) != 0) sb.append("  sticks ").append(mark(stickOk(t)));
+        if ((axes & 12) != 0) sb.append("  triggers ").append(mark(trigOk(t)));
+        sb.append("  gyro ").append(mark((t & T_GYRO) != 0));
+        sb.append("  accel ").append(mark((t & T_ACCEL) != 0));
+        if (touchpads > 0) sb.append("  touchpad ").append(mark((t & T_TOUCH) != 0));
+        return sb.toString();
+    }
+
+    private boolean stickOk(int t) {
+        boolean l = (axes & 1) == 0 || (t & T_LS) != 0;
+        boolean r = (axes & 2) == 0 || (t & T_RS) != 0;
+        return l && r;
+    }
+
+    private boolean trigOk(int t) {
+        boolean l = (axes & 4) == 0 || (t & T_L2) != 0;
+        boolean r = (axes & 8) == 0 || (t & T_R2) != 0;
+        return l && r;
     }
 
     private static String mark(boolean ok) { return ok ? "OK" : "-"; }
@@ -94,7 +125,24 @@ public class ControllerView extends View {
         setMeasuredDimension(width, (int) (width * 0.72f));
     }
 
+    // ---------------- labels per controller kind ----------------
+
+    private String[] faceLabels() {
+        switch (kind) {
+            case "ps":       return new String[] {"✕", "●", "■", "▲"}; // ✕ ● ■ ▲
+            case "nintendo": return new String[] {"B", "A", "Y", "X"};
+            default:         return new String[] {"A", "B", "X", "Y"};                     // xbox / steam / generic
+        }
+    }
+
+    private String backLabel()  { switch (kind) { case "ps": return "Create"; case "xbox": return "View"; case "nintendo": return "-"; case "steam": return "Back"; default: return "Back"; } }
+    private String startLabel() { switch (kind) { case "ps": return "Options"; case "xbox": return "Menu"; case "nintendo": return "+"; case "steam": return "Start"; default: return "Start"; } }
+    private String guideLabel() { switch (kind) { case "ps": return "PS"; case "nintendo": return "Home"; case "steam": return "Steam"; default: return "Guide"; } }
+    private String miscLabel()  { switch (kind) { case "ps": return "Mute"; case "xbox": return "Share"; case "nintendo": return "Capt"; default: return "Misc"; } }
+
     // ---------------- drawing (100 x 72 unit canvas) ----------------
+
+    private boolean has(int bit) { return ((present >> bit) & 1) != 0; }
 
     private int col(int bit) {
         if (((mask >> bit) & 1) != 0) return ORANGE;
@@ -107,16 +155,19 @@ public class ControllerView extends View {
         c.drawText(s, x, y + size * 0.35f, text);
     }
 
+    /** Rounded rectangle button, drawn only if present. */
     private void rbtn(Canvas c, float l, float t, float r, float b, int bit, String s) {
+        if (!has(bit)) return;
         rect.set(l, t, r, b);
         fill.setColor(col(bit));
         c.drawRoundRect(rect, 1f, 1f, fill);
         stroke.setColor(LINE);
         c.drawRoundRect(rect, 1f, 1f, stroke);
-        label(c, s, (l + r) / 2f, (t + b) / 2f, 2.2f);
+        if (s != null && !s.isEmpty()) label(c, s, (l + r) / 2f, (t + b) / 2f, 2.2f);
     }
 
     private void cbtn(Canvas c, float cx, float cy, float rad, int bit, String s) {
+        if (!has(bit)) return;
         fill.setColor(col(bit));
         c.drawCircle(cx, cy, rad, fill);
         stroke.setColor(LINE);
@@ -137,11 +188,13 @@ public class ControllerView extends View {
     }
 
     private void stick(Canvas c, float cx, float cy, float x, float y, int clickBit, boolean tested) {
-        stroke.setColor(((mask >> clickBit) & 1) != 0 ? ORANGE : (tested ? 0xFF66BB6A : LINE));
+        boolean clickable = has(clickBit);
+        boolean down = clickable && ((mask >> clickBit) & 1) != 0;
+        stroke.setColor(down ? ORANGE : (tested ? 0xFF66BB6A : LINE));
         stroke.setStrokeWidth(1f);
         c.drawCircle(cx, cy, 9f, stroke);
         stroke.setStrokeWidth(0.5f);
-        fill.setColor(((mask >> clickBit) & 1) != 0 ? ORANGE : (tested ? GREEN : GRAY));
+        fill.setColor(down ? ORANGE : (tested ? GREEN : GRAY));
         float dx = (x - 128f) / 128f * 6f, dy = (y - 128f) / 128f * 6f;
         c.drawCircle(cx + dx, cy + dy, 3.6f, fill);
     }
@@ -153,69 +206,49 @@ public class ControllerView extends View {
         c.scale(u, u);
         float[] f = frame;
         int t = testedFlags;
+        String[] fl = faceLabels();
 
-        meter(c, 6, 1, 30, 4, f[5] / 255f, (t & T_L2) != 0);
-        meter(c, 70, 1, 94, 4, f[6] / 255f, (t & T_R2) != 0);
-        rbtn(c, 6, 5.5f, 30, 10, 4, "L1");
-        rbtn(c, 70, 5.5f, 94, 10, 5, "R1");
+        // shoulders + triggers
+        if ((axes & 4) != 0) meter(c, 6, 1, 30, 4, f[5] / 255f, (t & T_L2) != 0); else rbtn(c, 6, 1, 30, 4, B_L2, "L2");
+        if ((axes & 8) != 0) meter(c, 70, 1, 94, 4, f[6] / 255f, (t & T_R2) != 0); else rbtn(c, 70, 1, 94, 4, B_R2, "R2");
+        rbtn(c, 6, 5.5f, 30, 10, B_L1, "L1");
+        rbtn(c, 70, 5.5f, 94, 10, B_R1, "R1");
 
-        // touchpad with finger dots
-        rect.set(36, 12, 64, 34);
-        fill.setColor(((mask >> 13) & 1) != 0 ? ORANGE : (((testedButtons >> 13) & 1) != 0 ? GREEN : 0xFF263238));
-        c.drawRoundRect(rect, 2f, 2f, fill);
-        stroke.setColor(LINE);
-        c.drawRoundRect(rect, 2f, 2f, stroke);
-        if (Settings.touchMode == Settings.TOUCH_SPLIT) {
-            stroke.setColor(LINE);
-            c.drawLine(50, 12, 50, 34, stroke);
-            label(c, "L pad", 43, 32.5f, 2f);
-            label(c, "R pad", 57, 32.5f, 2f);
-        } else if (Settings.touchMode == Settings.TOUCH_OFF) {
-            label(c, "touchpad off", 50, 32.5f, 2f);
-        } else {
-            label(c, "R pad (whole)", 50, 32.5f, 2f);
-        }
-        for (int i = 0; i < 2; i++) {
-            if (f[13 + 3 * i] > 0.5f) {
-                fill.setColor(i == 0 ? 0xFFFFFFFF : 0xFF4FC3F7);
-                float px = f[14 + 3 * i] / 1919f, py = f[15 + 3 * i] / 1079f;
-                if (Settings.touchInvX) px = 1f - px; // dots show what DroidDeck receives
-                if (Settings.touchInvY) py = 1f - py;
-                c.drawCircle(36 + px * 28f, 12 + py * 22f, 1.8f, fill);
-            }
-        }
+        drawTouchpads(c);
 
-        rbtn(c, 27, 14, 34, 18, 8, "Create");
-        rbtn(c, 66, 14, 73, 18, 9, "Opt");
-        rbtn(c, 46, 36, 54, 39.5f, 14, "Mute");
-        cbtn(c, 50, 44, 2.8f, 12, "PS");
+        rbtn(c, 27, 14, 36, 18, B_BACK, backLabel());
+        rbtn(c, 64, 14, 73, 18, B_START, startLabel());
+        rbtn(c, 45, 36, 55, 39.5f, B_MISC, miscLabel());
+        cbtn(c, 50, 44, 2.8f, B_GUIDE, guideLabel());
 
         // d-pad
-        rbtn(c, 18, 20, 22, 24, 15, "");
-        rbtn(c, 18, 32, 22, 36, 16, "");
-        rbtn(c, 14, 26, 18, 30, 17, "");
-        rbtn(c, 22, 26, 26, 30, 18, "");
-        label(c, "D-pad", 20, 40, 2.2f);
+        if (has(B_UP) || has(B_DOWN) || has(B_LEFT) || has(B_RIGHT)) {
+            rbtn(c, 18, 20, 22, 24, B_UP, "");
+            rbtn(c, 18, 32, 22, 36, B_DOWN, "");
+            rbtn(c, 14, 26, 18, 30, B_LEFT, "");
+            rbtn(c, 22, 26, 26, 30, B_RIGHT, "");
+            label(c, "D-pad", 20, 40, 2.2f);
+        }
 
-        // face buttons
-        cbtn(c, 80, 21, 3.2f, 3, "T");
-        cbtn(c, 80, 35, 3.2f, 0, "X");
-        cbtn(c, 73, 28, 3.2f, 2, "S");
-        cbtn(c, 87, 28, 3.2f, 1, "O");
+        // face buttons (diamond): N top, S bottom, W left, E right
+        cbtn(c, 80, 21, 3.2f, B_NORTH, fl[3]);
+        cbtn(c, 80, 35, 3.2f, B_SOUTH, fl[0]);
+        cbtn(c, 73, 28, 3.2f, B_WEST, fl[2]);
+        cbtn(c, 87, 28, 3.2f, B_EAST, fl[1]);
 
-        stick(c, 34, 53, f[1], f[2], 10, (t & T_LS) != 0);
-        stick(c, 66, 53, f[3], f[4], 11, (t & T_RS) != 0);
-        label(c, "L3", 34, 64.5f, 2.2f);
-        label(c, "R3", 66, 64.5f, 2.2f);
+        // sticks
+        if ((axes & 1) != 0) { stick(c, 34, 53, f[1], f[2], B_L3, (t & T_LS) != 0); label(c, has(B_L3) ? "L3" : "L", 34, 64.5f, 2.2f); }
+        if ((axes & 2) != 0) { stick(c, 66, 53, f[3], f[4], B_R3, (t & T_RS) != 0); label(c, has(B_R3) ? "R3" : "R", 66, 64.5f, 2.2f); }
 
-        // Edge extras
-        rbtn(c, 1.5f, 40, 6.5f, 56, 19, "L4");
-        rbtn(c, 93.5f, 40, 98.5f, 56, 20, "R4");
-        rbtn(c, 9, 60, 21, 64.5f, 21, "L Fn");
-        rbtn(c, 79, 60, 91, 64.5f, 22, "R Fn");
+        // paddles / grips
+        rbtn(c, 1.5f, 40, 6.5f, 56, B_P1, "L4");
+        rbtn(c, 93.5f, 40, 98.5f, 56, B_P2, "R4");
+        rbtn(c, 9, 60, 21, 64.5f, B_P3, "L5");
+        rbtn(c, 79, 60, 91, 64.5f, B_P4, "R5");
 
         String s1 = connected
-                ? String.format(java.util.Locale.ROOT, "Gyro dps  %.0f  %.0f  %.0f", f[7] * 57.29578f, f[8] * 57.29578f, f[9] * 57.29578f)
+                ? String.format(java.util.Locale.ROOT, "%s  |  Gyro dps  %.0f  %.0f  %.0f",
+                        kindName(), f[7] * 57.29578f, f[8] * 57.29578f, f[9] * 57.29578f)
                 : "No controller";
         String s2 = connected
                 ? String.format(java.util.Locale.ROOT, "Accel g  %.2f  %.2f  %.2f    Battery %d%%",
@@ -225,5 +258,65 @@ public class ControllerView extends View {
         label(c, s2, 50, 71f, 2.6f);
 
         c.restore();
+    }
+
+    private String kindName() {
+        switch (kind) {
+            case "ps": return "PlayStation";
+            case "xbox": return "Xbox";
+            case "nintendo": return "Nintendo";
+            case "steam": return "Steam Controller";
+            default: return "Gamepad";
+        }
+    }
+
+
+    /** Draws 0, 1 or 2 trackpads with their finger dots. */
+    private void drawTouchpads(Canvas c) {
+        float[] f = frame;
+        if (touchpads <= 0) {
+            label(c, "no touchpad", 50, 24, 2.2f);
+            return;
+        }
+        if (touchpads >= 2) {
+            padRect(c, 30, 12, 48, 34, "L pad", B_TOUCH);
+            padRect(c, 52, 12, 70, 34, "R pad", B_TOUCH);
+            fingerOnRect(c, 30, 48, 12, 34, 0, 0xFFFFFFFF);  // finger slot 0 -> left pad
+            fingerOnRect(c, 52, 70, 12, 34, 1, 0xFF4FC3F7);  // finger slot 1 -> right pad
+            return;
+        }
+        // single touchpad
+        padRect(c, 36, 12, 64, 34, null, B_TOUCH);
+        if (Settings.touchMode == Settings.TOUCH_SPLIT) {
+            stroke.setColor(LINE);
+            c.drawLine(50, 12, 50, 34, stroke);
+            label(c, "L pad", 43, 32.5f, 2f);
+            label(c, "R pad", 57, 32.5f, 2f);
+        } else if (Settings.touchMode == Settings.TOUCH_OFF) {
+            label(c, "touchpad off", 50, 32.5f, 2f);
+        } else {
+            label(c, "whole pad", 50, 32.5f, 2f);
+        }
+        fingerOnRect(c, 36, 64, 12, 34, 0, 0xFFFFFFFF);
+        fingerOnRect(c, 36, 64, 12, 34, 1, 0xFF4FC3F7);
+    }
+
+    private void padRect(Canvas c, float l, float t, float r, float b, String lbl, int bit) {
+        rect.set(l, t, r, b);
+        fill.setColor(((mask >> bit) & 1) != 0 ? ORANGE : (((testedButtons >> bit) & 1) != 0 ? GREEN : 0xFF263238));
+        c.drawRoundRect(rect, 2f, 2f, fill);
+        stroke.setColor(LINE);
+        c.drawRoundRect(rect, 2f, 2f, stroke);
+        if (lbl != null) label(c, lbl, (l + r) / 2f, b - 1.5f, 2f);
+    }
+
+    private void fingerOnRect(Canvas c, float l, float r, float t, float b, int fingerSlot, int color) {
+        float[] f = frame;
+        if (f[13 + 3 * fingerSlot] <= 0.5f) return;
+        float nx = f[14 + 3 * fingerSlot] / 1919f, ny = f[15 + 3 * fingerSlot] / 1079f;
+        if (Settings.touchInvX) nx = 1f - nx;
+        if (Settings.touchInvY) ny = 1f - ny;
+        fill.setColor(color);
+        c.drawCircle(l + nx * (r - l), t + ny * (b - t), 1.8f, fill);
     }
 }

@@ -15,7 +15,7 @@
 
 static JavaVM *g_vm;
 static jclass g_cls;
-static jmethodID g_frame, g_status, g_gone, g_info;
+static jmethodID g_frame, g_status, g_gone, g_info, g_caps;
 
 /* Per-slot output state, written from Java threads, read by the SDL thread. */
 static _Atomic int g_rl[MAX_PADS], g_rr[MAX_PADS];
@@ -37,6 +37,7 @@ JNIEXPORT jint JNI_OnLoad(JavaVM *vm, void *reserved)
     g_status = (*env)->GetStaticMethodID(env, g_cls, "onStatus", "(Ljava/lang/String;)V");
     g_gone = (*env)->GetStaticMethodID(env, g_cls, "onPadGone", "(I)V");
     g_info = (*env)->GetStaticMethodID(env, g_cls, "onPadInfo", "(IIILjava/lang/String;)V");
+    g_caps = (*env)->GetStaticMethodID(env, g_cls, "onPadCaps", "(IIIILjava/lang/String;)V");
     g_vm = vm;
     return JNI_VERSION_1_6;
 }
@@ -154,13 +155,24 @@ static void send_frame(JNIEnv *env, int slot, SDL_Gamepad *pad, jfloatArray arr)
     if (SDL_GetGamepadSensorData(pad, SDL_SENSOR_GYRO, v, 3)) { f[7] = v[0]; f[8] = v[1]; f[9] = v[2]; }
     if (SDL_GetGamepadSensorData(pad, SDL_SENSOR_ACCEL, v, 3)) { f[10] = v[0]; f[11] = v[1]; f[12] = v[2]; }
 
-    if (SDL_GetNumGamepadTouchpads(pad) > 0) {
+    int ntp = SDL_GetNumGamepadTouchpads(pad);
+    if (ntp >= 2) {
+        /* two trackpads (e.g. Steam Controller): finger slot 0 = pad 0, slot 1 = pad 1 */
+        for (int tp = 0; tp < 2; tp++) {
+            bool down = false; float x = 0, y = 0, p = 0;
+            if (SDL_GetGamepadTouchpadFinger(pad, tp, 0, &down, &x, &y, &p) && down) {
+                f[13 + 3 * tp] = 1.0f;
+                f[14 + 3 * tp] = x * 1919.0f;
+                f[15 + 3 * tp] = y * 1079.0f;
+            }
+        }
+    } else if (ntp == 1) {
         for (int i = 0; i < 2; i++) {
             bool down = false;
             float x = 0, y = 0, p = 0;
             if (SDL_GetGamepadTouchpadFinger(pad, 0, i, &down, &x, &y, &p) && down) {
                 f[13 + 3 * i] = 1.0f;
-                f[14 + 3 * i] = x * 1919.0f;   /* DualSense touchpad is 1920 x 1080 */
+                f[14 + 3 * i] = x * 1919.0f;   /* normalized; the view divides by the same */
                 f[15 + 3 * i] = y * 1079.0f;
             }
         }
@@ -286,6 +298,42 @@ static void refresh_status(JNIEnv *env)
     }
 }
 
+/* Which buttons/axes/touchpads this controller actually has, so the UI can draw a universal layout. */
+static void send_caps(JNIEnv *env, int slot, SDL_Gamepad *pad)
+{
+    int present = 0;
+    for (size_t i = 0; i < SDL_arraysize(BUTTONS); i++) {
+        if (SDL_GamepadHasButton(pad, BUTTONS[i].button)) present |= 1 << BUTTONS[i].bit;
+    }
+    int axes = 0;
+    if (SDL_GamepadHasAxis(pad, SDL_GAMEPAD_AXIS_LEFTX))         axes |= 1;
+    if (SDL_GamepadHasAxis(pad, SDL_GAMEPAD_AXIS_RIGHTX))        axes |= 2;
+    if (SDL_GamepadHasAxis(pad, SDL_GAMEPAD_AXIS_LEFT_TRIGGER))  axes |= 4;
+    if (SDL_GamepadHasAxis(pad, SDL_GAMEPAD_AXIS_RIGHT_TRIGGER)) axes |= 8;
+    int touchpads = SDL_GetNumGamepadTouchpads(pad);
+
+    const char *kind;
+    switch (SDL_GetGamepadType(pad)) {
+        case SDL_GAMEPAD_TYPE_PS3:
+        case SDL_GAMEPAD_TYPE_PS4:
+        case SDL_GAMEPAD_TYPE_PS5: kind = "ps"; break;
+        case SDL_GAMEPAD_TYPE_XBOX360:
+        case SDL_GAMEPAD_TYPE_XBOXONE: kind = "xbox"; break;
+        case SDL_GAMEPAD_TYPE_NINTENDO_SWITCH_PRO:
+        case SDL_GAMEPAD_TYPE_NINTENDO_SWITCH_JOYCON_LEFT:
+        case SDL_GAMEPAD_TYPE_NINTENDO_SWITCH_JOYCON_RIGHT:
+        case SDL_GAMEPAD_TYPE_NINTENDO_SWITCH_JOYCON_PAIR: kind = "nintendo"; break;
+        case SDL_GAMEPAD_TYPE_STEAM: kind = "steam"; break;
+        default: {
+            const char *nm = SDL_GetGamepadName(pad);
+            kind = (nm && SDL_strcasestr(nm, "steam")) ? "steam" : "generic";
+        }
+    }
+    jstring k = (*env)->NewStringUTF(env, kind);
+    (*env)->CallStaticVoidMethod(env, g_cls, g_caps, (jint)slot, (jint)present, (jint)axes, (jint)touchpads, k);
+    (*env)->DeleteLocalRef(env, k);
+}
+
 static void setup_slot(JNIEnv *env, int slot)
 {
     SDL_Gamepad *pad = g_pads[slot];
@@ -295,6 +343,7 @@ static void setup_slot(JNIEnv *env, int slot)
     if (slot == 0) atomic_store(&g_player_dirty, 1);
     else SDL_SetGamepadPlayerIndex(pad, slot);
     send_info(env, slot, SDL_GetGamepadVendor(pad), SDL_GetGamepadProduct(pad), SDL_GetGamepadName(pad));
+    send_caps(env, slot, pad);
     g_last_diag[0] = 0;
 }
 

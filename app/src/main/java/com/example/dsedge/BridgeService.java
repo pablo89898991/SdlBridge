@@ -6,6 +6,15 @@ import android.app.NotificationManager;
 import android.app.Service;
 import android.content.Intent;
 import android.content.pm.ServiceInfo;
+import android.graphics.Color;
+import android.graphics.PixelFormat;
+import android.graphics.drawable.GradientDrawable;
+import android.util.TypedValue;
+import android.view.Gravity;
+import android.view.MotionEvent;
+import android.view.View;
+import android.view.WindowManager;
+import android.widget.TextView;
 import android.os.Build;
 import android.os.Bundle;
 import android.os.Handler;
@@ -55,6 +64,13 @@ public class BridgeService extends Service implements NativeBridge.Listener {
     };
     private final Messenger messenger = new Messenger(handler);
 
+    // ---- floating bubble ----
+    private final Handler main = new Handler(Looper.getMainLooper());
+    private WindowManager wm;
+    private TextView bubble;
+    private WindowManager.LayoutParams bubbleLp;
+    private volatile boolean connectedState;
+
     @Override public void onCreate() {
         super.onCreate();
         Settings.init(this);
@@ -75,12 +91,112 @@ public class BridgeService extends Service implements NativeBridge.Listener {
         } catch (RuntimeException e) {
             // Without a foreground notification the bridge may be stopped in the background; keep running anyway.
         }
+        if (i != null && "BUBBLE".equals(i.getAction())) {
+            if (i.getBooleanExtra("on", false)) showBubble(); else hideBubble();
+        } else if (Settings.bubble) {
+            showBubble();
+        }
         return START_NOT_STICKY;
     }
 
     @Override public void onDestroy() {
         NativeBridge.listeners.remove(this);
+        hideBubble();
         super.onDestroy();
+    }
+
+    // ---------- floating bubble ----------
+
+    @SuppressWarnings("ClickableViewAccessibility")
+    private void showBubble() {
+        if (bubble != null) return;
+        if (!android.provider.Settings.canDrawOverlays(this)) return; // no permission yet
+        wm = (WindowManager) getSystemService(WINDOW_SERVICE);
+
+        int size = dp(52);
+        TextView b = new TextView(this);
+        b.setText("SDL");
+        b.setTextColor(Color.WHITE);
+        b.setGravity(Gravity.CENTER);
+        b.setTextSize(13f);
+        b.setWidth(size);
+        b.setHeight(size);
+        b.setBackground(bubbleBg(connectedState));
+        b.setElevation(dp(4));
+
+        int type = Build.VERSION.SDK_INT >= 26
+                ? WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY
+                : WindowManager.LayoutParams.TYPE_PHONE;
+        WindowManager.LayoutParams lp = new WindowManager.LayoutParams(
+                WindowManager.LayoutParams.WRAP_CONTENT, WindowManager.LayoutParams.WRAP_CONTENT, type,
+                WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE | WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS,
+                PixelFormat.TRANSLUCENT);
+        lp.gravity = Gravity.TOP | Gravity.START;
+        lp.x = Settings.bubbleX;
+        lp.y = Settings.bubbleY;
+
+        final int slop = dp(8);
+        b.setOnTouchListener(new View.OnTouchListener() {
+            float downX, downY; int startX, startY; boolean moved;
+            @Override public boolean onTouch(View v, MotionEvent e) {
+                switch (e.getAction()) {
+                    case MotionEvent.ACTION_DOWN:
+                        downX = e.getRawX(); downY = e.getRawY();
+                        startX = bubbleLp.x; startY = bubbleLp.y; moved = false;
+                        return true;
+                    case MotionEvent.ACTION_MOVE:
+                        int nx = startX + (int) (e.getRawX() - downX);
+                        int ny = startY + (int) (e.getRawY() - downY);
+                        if (Math.abs(nx - startX) + Math.abs(ny - startY) > slop) moved = true;
+                        bubbleLp.x = nx; bubbleLp.y = ny;
+                        try { wm.updateViewLayout(bubble, bubbleLp); } catch (RuntimeException ignored) { }
+                        return true;
+                    case MotionEvent.ACTION_UP:
+                        Settings.bubbleX = bubbleLp.x; Settings.bubbleY = bubbleLp.y; Settings.save();
+                        if (!moved) {
+                            try {
+                                startActivity(new Intent(BridgeService.this, BridgeActivity.class)
+                                        .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK));
+                            } catch (RuntimeException ignored) { }
+                        }
+                        return true;
+                }
+                return false;
+            }
+        });
+
+        try {
+            wm.addView(b, lp);
+            bubble = b;
+            bubbleLp = lp;
+        } catch (RuntimeException e) {
+            bubble = null;
+        }
+    }
+
+    private void hideBubble() {
+        if (bubble != null && wm != null) {
+            try { wm.removeView(bubble); } catch (RuntimeException ignored) { }
+        }
+        bubble = null;
+    }
+
+    private GradientDrawable bubbleBg(boolean connected) {
+        GradientDrawable g = new GradientDrawable();
+        g.setShape(GradientDrawable.OVAL);
+        g.setColor(connected ? 0xFF2E7D32 : 0xFF455A64);   // green when a controller is live, grey otherwise
+        g.setStroke(dp(2), 0xCCFFFFFF);
+        return g;
+    }
+
+    private void updateBubble() {
+        final TextView b = bubble;
+        if (b == null) return;
+        main.post(() -> { if (bubble != null) bubble.setBackground(bubbleBg(connectedState)); });
+    }
+
+    private int dp(int v) {
+        return (int) TypedValue.applyDimension(TypedValue.COMPLEX_UNIT_DIP, v, getResources().getDisplayMetrics());
     }
 
     // ---------- client -> controller ----------
@@ -122,8 +238,13 @@ public class BridgeService extends Service implements NativeBridge.Listener {
         b.putInt("l2", (int) f[5]); b.putInt("r2", (int) f[6]);
         float gk = Settings.gyroGain / 100f;
         int inv = Settings.gyroInvert;
+        float dz = Settings.gyroDeadzone;
         float[] gy = {f[7] * RAD_TO_DEG, f[8] * RAD_TO_DEG, f[9] * RAD_TO_DEG};   // deg/s
         float[] ac = {f[10] / G, f[11] / G, f[12] / G};                          // g
+        for (int k = 0; k < 3; k++) {
+            gy[k] -= Settings.gyroBias[k];                 // remove resting drift (from Calibrate)
+            if (Math.abs(gy[k]) < dz) gy[k] = 0f;          // deadzone, in real deg/s (before gain)
+        }
         float[] go = new float[3], ao = new float[3];
         for (int i = 0; i < 3; i++) {
             float sign = (inv & (1 << i)) != 0 ? -1f : 1f;
@@ -199,6 +320,8 @@ public class BridgeService extends Service implements NativeBridge.Listener {
     }
 
     @Override public void onStatus(String s) {
+        connectedState = s != null && s.startsWith("Connected");
+        updateBubble();
         for (Messenger c : clients) sendStatus(c, s);
     }
 
