@@ -7,6 +7,8 @@ import android.os.Build;
 import android.graphics.Color;
 import android.hardware.usb.UsbDevice;
 import android.hardware.usb.UsbManager;
+import android.media.AudioDeviceInfo;
+import android.media.AudioManager;
 import android.net.Uri;
 import android.os.Bundle;
 import android.os.Handler;
@@ -45,6 +47,7 @@ public class BridgeActivity extends SDLActivity implements NativeBridge.Listener
     private final float[] calibSum = new float[3];
     private TextView gyroCalibView;
     private boolean pendingBubble;   // user asked for the bubble; waiting for overlay permission
+    private TextView audioView;
 
     @Override protected String[] getLibraries() {
         return new String[] { "SDL3", "main" };
@@ -145,6 +148,14 @@ public class BridgeActivity extends SDLActivity implements NativeBridge.Listener
         root.addView(text("A draggable bubble (like a chat head) that shows bridge status and opens this screen "
                 + "on tap. Needs the \"Draw over other apps\" permission; if the switch does nothing, grant it and toggle again.", 11f));
 
+        // ---- USB audio ----
+        root.addView(header("USB audio"));
+        audioView = text(audioInfo(), 12f);
+        root.addView(audioView);
+        root.addView(button("Switch audio output", v -> openAudioOutput()));
+        root.addView(text("When the controller is plugged in via USB-C, Android may route audio to its headset jack/speaker. "
+                + "Android controls routing, so this opens the system output picker to switch between the controller and the phone.", 11f));
+
         // ---- Touchpad ----
         root.addView(header("Touchpad"));
         addCheck(root, "Invert touchpad X (left/right)", Settings.touchInvX, on -> Settings.touchInvX = on);
@@ -189,7 +200,7 @@ public class BridgeActivity extends SDLActivity implements NativeBridge.Listener
         try {
             startForegroundService(new Intent(this, BridgeService.class));
         } catch (RuntimeException ignored) { }
-        NativeBridge.applyForce();
+        NativeBridge.applyDriver();   // restore the on/off driver state (bubble tap)
         NativeBridge.applyOutput(); // apply the saved light settings
         checkUpdate();
         ui.post(usbRefresh);
@@ -296,6 +307,43 @@ public class BridgeActivity extends SDLActivity implements NativeBridge.Listener
         } catch (RuntimeException e) {
             return "USB: unavailable";
         }
+    }
+
+    /** Lists any USB / headset audio outputs Android currently sees (e.g. the controller's audio device). */
+    private String audioInfo() {
+        try {
+            AudioManager am = (AudioManager) getSystemService(AUDIO_SERVICE);
+            StringBuilder sb = new StringBuilder("Audio out: ");
+            boolean any = false;
+            for (AudioDeviceInfo d : am.getDevices(AudioManager.GET_DEVICES_OUTPUTS)) {
+                int t = d.getType();
+                if (t == AudioDeviceInfo.TYPE_USB_DEVICE || t == AudioDeviceInfo.TYPE_USB_HEADSET || t == AudioDeviceInfo.TYPE_USB_ACCESSORY) {
+                    any = true;
+                    CharSequence nm = d.getProductName();
+                    sb.append(nm != null ? nm : (t == AudioDeviceInfo.TYPE_USB_HEADSET ? "USB headset" : "USB audio")).append("  ");
+                }
+            }
+            if (!any) sb.append("no USB audio device (plug the controller in with USB-C, or no audio interface)");
+            return sb.toString();
+        } catch (RuntimeException e) {
+            return "Audio out: unavailable";
+        }
+    }
+
+    /** Opens Android's media output switcher so the user can route audio to the controller or phone. */
+    private void openAudioOutput() {
+        // The media output panel: works on most devices; fall back to Sound settings.
+        Intent panel = new Intent("com.android.settings.panel.action.MEDIA_OUTPUT")
+                .putExtra("com.android.settings.panel.extra.PACKAGE_NAME", getPackageName())
+                .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+        try {
+            startActivity(panel);
+            return;
+        } catch (RuntimeException ignored) { }
+        try {
+            startActivity(new Intent(android.provider.Settings.ACTION_SOUND_SETTINGS)
+                    .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK));
+        } catch (RuntimeException ignored) { }
     }
 
     // ---------- tests ----------

@@ -106,10 +106,18 @@ controller kind (PlayStation ✕●■▲, Xbox A/B/X/Y, Nintendo B/A/Y/X, Steam
 trackpads (Steam Controller 2015 and 2026) show both pads with separate finger dots. Driven by a
 capability report from the native layer, so new SDL3-supported controllers work without code changes.
 
-## Floating bubble
+## Floating bubble (chat-head)
 
-"Floating bubble" -> "Show floating bubble over other apps": a draggable chat-head style bubble that
-floats over DroidDeck and any app. It shows bridge status (green = a controller is live, grey = waiting),
-you can drag it anywhere (position is remembered), and tapping it opens the bridge screen. Needs the
-Android "Draw over other apps" permission; the first time you enable it, grant the permission then toggle
-it again. Bridge-side only.
+"Floating bubble" -> "Show floating bubble over other apps": a draggable chat-head over any app.
+- **Tap**: turns the SDL3 driver on (forced USB) or off (releases the controller to Android). Green = on, red = off.
+- **Hold 3s**: opens the bridge app.
+- **Drag to the bottom**: a remove zone appears (like Messenger); drop the bubble on it to dismiss.
+- Position is remembered. Needs the "Draw over other apps" permission (grant it, then toggle on).
+
+
+## USB audio
+
+"USB audio": shows any USB/headset audio output Android sees (e.g. the controller's audio device when
+plugged in via USB-C) and a "Switch audio output" button that opens Android's media-output picker.
+Android controls routing, so a normal app can't force game audio to a device directly; this is the
+supported way to switch between the controller and the phone.

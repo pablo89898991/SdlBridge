@@ -54,6 +54,14 @@ Add the token secret (one time), because GitHub forbids the built-in token from 
 - GitHub -> your fork -> **Settings -> Secrets and variables -> Actions -> New repository secret**
 - Name: `SYNC_PAT`  Value: a Personal Access Token with **repo** + **workflow** scope (the same kind you push with from Termux).
 
+(Optional but recommended) add two more secrets so the build pulls its base Debian image from Docker Hub
+(authenticated) instead of a rate-limited public registry:
+
+- `DOCKERHUB_USER` = your Docker Hub username
+- `DOCKERHUB_TOKEN` = a Docker Hub access token (hub.docker.com -> Account settings -> Personal access tokens)
+
+The patcher adds a `docker login` step automatically; if these secrets are absent it is simply skipped.
+
 Then on GitHub: **Actions -> Sync upstream + patch -> Run workflow**. It fills `sdl3deck` with
 "latest upstream + bridge + SDL3Deck name" and triggers Build APK on that branch. After that it runs
 daily on its own. Grab the APK from the Build APK run on `sdl3deck`.

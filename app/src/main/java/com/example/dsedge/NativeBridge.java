@@ -113,6 +113,16 @@ public final class NativeBridge {
 
     static native void nativeRescan();
 
+    /** Hard on/off for the SDL3 driver: on = forced SDL3 USB, off = release the controller to Android. */
+    static void applyDriver() {
+        try {
+            nativeSetDriver(Settings.driverEnabled ? 1 : 0);
+            if (Settings.driverEnabled) nativeSetForce(Settings.forceUsb ? 1 : 0);
+        } catch (UnsatisfiedLinkError e) { }
+    }
+
+    static native void nativeSetDriver(int on);
+
     /** rumble strong/weak 0..255, lightbar rgb 0..255. */
     static native void nativeSetOutput(int rumbleStrong, int rumbleWeak, int r, int g, int b);
 

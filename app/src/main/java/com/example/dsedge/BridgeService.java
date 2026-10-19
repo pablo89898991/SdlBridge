@@ -70,6 +70,10 @@ public class BridgeService extends Service implements NativeBridge.Listener {
     private WindowManager wm;
     private TextView bubble;
     private WindowManager.LayoutParams bubbleLp;
+    private int bubbleSize;
+    private View removeZone;
+    private boolean longPressFired;
+    private Runnable bubbleLongPress;
     private volatile boolean connectedState;
 
     @Override public void onCreate() {
@@ -106,7 +110,10 @@ public class BridgeService extends Service implements NativeBridge.Listener {
         super.onDestroy();
     }
 
-    // ---------- floating bubble ----------
+    // ---------- floating bubble (chat-head) ----------
+    //   tap           -> toggle the SDL3 forced driver (green = on, red = off)
+    //   hold 3s       -> open the bridge app
+    //   drag to the bottom remove zone -> dismiss the bubble
 
     @SuppressWarnings("ClickableViewAccessibility")
     private void showBubble() {
@@ -114,15 +121,15 @@ public class BridgeService extends Service implements NativeBridge.Listener {
         if (!android.provider.Settings.canDrawOverlays(this)) return; // no permission yet
         wm = (WindowManager) getSystemService(WINDOW_SERVICE);
 
-        int size = dp(52);
+        bubbleSize = dp(52);
         TextView b = new TextView(this);
-        b.setText("SDL");
+        b.setText("SDL3");
         b.setTextColor(Color.WHITE);
         b.setGravity(Gravity.CENTER);
-        b.setTextSize(13f);
-        b.setWidth(size);
-        b.setHeight(size);
-        b.setBackground(bubbleBg(connectedState));
+        b.setTextSize(12f);
+        b.setWidth(bubbleSize);
+        b.setHeight(bubbleSize);
+        b.setBackground(bubbleBg(Settings.driverEnabled));
         b.setElevation(dp(4));
 
         int type = Build.VERSION.SDK_INT >= 26
@@ -136,29 +143,39 @@ public class BridgeService extends Service implements NativeBridge.Listener {
         lp.x = Settings.bubbleX;
         lp.y = Settings.bubbleY;
 
-        final int slop = dp(8);
+        final int slop = dp(10);
         b.setOnTouchListener(new View.OnTouchListener() {
             float downX, downY; int startX, startY; boolean moved;
             @Override public boolean onTouch(View v, MotionEvent e) {
                 switch (e.getAction()) {
                     case MotionEvent.ACTION_DOWN:
                         downX = e.getRawX(); downY = e.getRawY();
-                        startX = bubbleLp.x; startY = bubbleLp.y; moved = false;
+                        startX = bubbleLp.x; startY = bubbleLp.y; moved = false; longPressFired = false;
+                        bubbleLongPress = () -> { longPressFired = true; openBridgeApp(); };
+                        main.postDelayed(bubbleLongPress, 3000);
                         return true;
-                    case MotionEvent.ACTION_MOVE:
+                    case MotionEvent.ACTION_MOVE: {
                         int nx = startX + (int) (e.getRawX() - downX);
                         int ny = startY + (int) (e.getRawY() - downY);
-                        if (Math.abs(nx - startX) + Math.abs(ny - startY) > slop) moved = true;
+                        if (!moved && Math.abs(nx - startX) + Math.abs(ny - startY) > slop) {
+                            moved = true;
+                            if (bubbleLongPress != null) main.removeCallbacks(bubbleLongPress);
+                            showRemoveZone();
+                        }
                         bubbleLp.x = nx; bubbleLp.y = ny;
                         try { wm.updateViewLayout(bubble, bubbleLp); } catch (RuntimeException ignored) { }
+                        if (moved) highlightRemoveZone(overRemoveZone());
                         return true;
+                    }
+                    case MotionEvent.ACTION_CANCEL:
                     case MotionEvent.ACTION_UP:
-                        Settings.bubbleX = bubbleLp.x; Settings.bubbleY = bubbleLp.y; Settings.save();
-                        if (!moved) {
-                            try {
-                                startActivity(new Intent(BridgeService.this, BridgeActivity.class)
-                                        .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK));
-                            } catch (RuntimeException ignored) { }
+                        if (bubbleLongPress != null) main.removeCallbacks(bubbleLongPress);
+                        boolean removed = false;
+                        if (moved && overRemoveZone()) { removeBubbleByUser(); removed = true; }
+                        hideRemoveZone();
+                        if (!removed) {
+                            Settings.bubbleX = bubbleLp.x; Settings.bubbleY = bubbleLp.y; Settings.save();
+                            if (!moved && !longPressFired) toggleDriver();
                         }
                         return true;
                 }
@@ -175,25 +192,106 @@ public class BridgeService extends Service implements NativeBridge.Listener {
         }
     }
 
+    private void openBridgeApp() {
+        try {
+            startActivity(new Intent(BridgeService.this, BridgeActivity.class)
+                    .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK));
+        } catch (RuntimeException ignored) { }
+    }
+
+    /** Tap action: flip the SDL3 forced driver and recolor the bubble. */
+    private void toggleDriver() {
+        Settings.driverEnabled = !Settings.driverEnabled;
+        if (Settings.driverEnabled) Settings.forceUsb = true;   // on = forced SDL3 USB
+        Settings.save();
+        NativeBridge.applyDriver();
+        updateBubble();
+    }
+
+    private void removeBubbleByUser() {
+        Settings.bubble = false;
+        Settings.save();
+        hideBubble();
+    }
+
     private void hideBubble() {
         if (bubble != null && wm != null) {
             try { wm.removeView(bubble); } catch (RuntimeException ignored) { }
         }
         bubble = null;
+        hideRemoveZone();
     }
 
-    private GradientDrawable bubbleBg(boolean connected) {
+    // ---- remove zone (the drop target at the bottom) ----
+
+    private void showRemoveZone() {
+        if (removeZone != null || wm == null) return;
+        int zs = dp(64);
+        TextView z = new TextView(this);
+        z.setText("✕");
+        z.setTextColor(Color.WHITE);
+        z.setGravity(Gravity.CENTER);
+        z.setTextSize(22f);
+        z.setWidth(zs);
+        z.setHeight(zs);
+        z.setBackground(removeZoneBg(false));
+        WindowManager.LayoutParams lp = new WindowManager.LayoutParams(
+                WindowManager.LayoutParams.WRAP_CONTENT, WindowManager.LayoutParams.WRAP_CONTENT,
+                bubbleLp.type,
+                WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE | WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE
+                        | WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS,
+                PixelFormat.TRANSLUCENT);
+        lp.gravity = Gravity.BOTTOM | Gravity.CENTER_HORIZONTAL;
+        lp.y = dp(48);
+        try { wm.addView(z, lp); removeZone = z; } catch (RuntimeException e) { removeZone = null; }
+    }
+
+    private void hideRemoveZone() {
+        if (removeZone != null && wm != null) {
+            try { wm.removeView(removeZone); } catch (RuntimeException ignored) { }
+        }
+        removeZone = null;
+    }
+
+    private void highlightRemoveZone(boolean over) {
+        if (removeZone instanceof TextView) {
+            removeZone.setBackground(removeZoneBg(over));
+            ((TextView) removeZone).setScaleX(over ? 1.25f : 1f);
+            ((TextView) removeZone).setScaleY(over ? 1.25f : 1f);
+        }
+    }
+
+    private GradientDrawable removeZoneBg(boolean over) {
         GradientDrawable g = new GradientDrawable();
         g.setShape(GradientDrawable.OVAL);
-        g.setColor(connected ? 0xFF2E7D32 : 0xFF455A64);   // green when a controller is live, grey otherwise
+        g.setColor(over ? 0xFFC62828 : 0xCC424242);
+        g.setStroke(dp(2), 0xCCFFFFFF);
+        return g;
+    }
+
+    /** True when the bubble's centre is over the bottom remove zone. */
+    private boolean overRemoveZone() {
+        if (removeZone == null) return false;
+        android.util.DisplayMetrics dm = getResources().getDisplayMetrics();
+        float bx = bubbleLp.x + bubbleSize / 2f;
+        float by = bubbleLp.y + bubbleSize / 2f;
+        float zx = dm.widthPixels / 2f;
+        float zy = dm.heightPixels - dp(48) - dp(32);   // zone centre (bottom margin + half height)
+        float dx = bx - zx, dy = by - zy;
+        return Math.sqrt(dx * dx + dy * dy) < dp(80);
+    }
+
+    private GradientDrawable bubbleBg(boolean driverOn) {
+        GradientDrawable g = new GradientDrawable();
+        g.setShape(GradientDrawable.OVAL);
+        g.setColor(driverOn ? 0xFF2E7D32 : 0xFFC62828);   // green = SDL3 driver on, red = off
         g.setStroke(dp(2), 0xCCFFFFFF);
         return g;
     }
 
     private void updateBubble() {
-        final TextView b = bubble;
-        if (b == null) return;
-        main.post(() -> { if (bubble != null) bubble.setBackground(bubbleBg(connectedState)); });
+        if (bubble == null) return;
+        main.post(() -> { if (bubble != null) bubble.setBackground(bubbleBg(Settings.driverEnabled)); });
     }
 
     private int dp(int v) {

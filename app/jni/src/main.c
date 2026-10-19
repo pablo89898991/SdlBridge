@@ -85,6 +85,17 @@ JNIEXPORT void JNICALL Java_com_example_dsedge_NativeBridge_nativeRescan(JNIEnv 
     atomic_store(&g_rescan, 1);
 }
 
+static atomic_int g_driver_off = 0;   /* 1 = SDL3 (HIDAPI) driver disabled: release the controller to Android */
+
+/* Hard on/off for the SDL3 driver. Off disables HIDAPI and releases the controller; on re-enables it. */
+JNIEXPORT void JNICALL Java_com_example_dsedge_NativeBridge_nativeSetDriver(JNIEnv *env, jclass c, jint on)
+{
+    (void)env; (void)c;
+    atomic_store(&g_driver_off, on ? 0 : 1);
+    SDL_SetHint(SDL_HINT_JOYSTICK_HIDAPI, on ? "1" : "0");
+    atomic_store(&g_rescan, 1);
+}
+
 static void send_status(JNIEnv *env, const char *msg)
 {
     jstring s = (*env)->NewStringUTF(env, msg);
@@ -276,7 +287,9 @@ static int slot_of(SDL_JoystickID id)
 static void refresh_status(JNIEnv *env)
 {
     char diag[560];
-    if (g_pads[0]) {
+    if (atomic_load(&g_driver_off)) {
+        snprintf(diag, sizeof(diag), "SDL3 driver OFF \u2014 controller released to Android (tap the bubble to turn it back on)");
+    } else if (g_pads[0]) {
         describe(g_pads[0], diag, sizeof(diag));
         char tail[40];
         snprintf(tail, sizeof(tail), " | players:%d", pad_count());
@@ -349,6 +362,7 @@ static void setup_slot(JNIEnv *env, int slot)
 
 static void open_unopened(JNIEnv *env)
 {
+    if (atomic_load(&g_driver_off)) return;   /* driver off: don't claim anything */
     int n = 0;
     SDL_JoystickID *ids = SDL_GetGamepads(&n);
     for (int i = 0; ids && i < n; i++) {

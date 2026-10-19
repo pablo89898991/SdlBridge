@@ -27,6 +27,7 @@ final class Settings {
     static volatile int touchMode = TOUCH_SPLIT;
     static final int[] src = new int[4];
     static volatile boolean forceUsb = true;
+    static volatile boolean driverEnabled = true;   // bubble tap toggles this: on = forced SDL3 USB, off = driver released
     static volatile boolean bubble = false;          // floating draw-over bubble
     static volatile int bubbleX = 24, bubbleY = 160;  // last bubble position (px)
     static volatile boolean touchInvX, touchInvY, touchSwap;
@@ -53,6 +54,7 @@ final class Settings {
             src[i] = Math.max(0, Math.min(SRC_BITS.length - 1, prefs.getInt("src" + i, 0)));
         }
         forceUsb = prefs.getBoolean("forceUsb", true);
+        driverEnabled = prefs.getBoolean("driverEnabled", true);
         bubble = prefs.getBoolean("bubble", false);
         bubbleX = prefs.getInt("bubbleX", 24);
         bubbleY = prefs.getInt("bubbleY", 160);
@@ -81,6 +83,7 @@ final class Settings {
         e.putInt("touchMode", touchMode);
         for (int i = 0; i < 4; i++) e.putInt("src" + i, src[i]);
         e.putBoolean("forceUsb", forceUsb);
+        e.putBoolean("driverEnabled", driverEnabled);
         e.putBoolean("bubble", bubble).putInt("bubbleX", bubbleX).putInt("bubbleY", bubbleY);
         e.putBoolean("touchInvX", touchInvX).putBoolean("touchInvY", touchInvY).putBoolean("touchSwap", touchSwap);
         for (int i = 0; i < 3; i++) e.putInt("gyroMap" + i, gyroMap[i]);
