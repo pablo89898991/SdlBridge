@@ -57,3 +57,13 @@ The status line says "Forced SDL3 USB mode: waiting..." until SDL's driver has t
 Axis remap: each DroidDeck gyro axis (X/Y/Z) can be fed from any controller axis, with optional invert. The accelerometer follows by default so gravity stays consistent with rotation.
 
 Touchpad orientation: invert X, invert Y and swap X/Y, applied to both trackpads (swap first, then invert).
+
+## Multiple controllers (up to 4)
+
+The bridge opens every SDL3-supported controller it sees (up to 4) and sends each as its own player slot.
+- Player 1 keeps all features: touchpad, Edge back buttons/Fn, lightbar and player LEDs from the settings screen, gyro.
+- Players 2-4 are plain gamepads in DroidDeck: buttons, sticks, triggers, gyro, rumble, and a fixed lightbar colour (red, green, orange).
+- Wire protocol additions: frames carry `slot` (0..3), `vid` and `pid`; message 12 (`slot`) means that controller was unplugged; a rumble request may carry `slot`.
+- The Android copy of a controller that SDL already reads through its USB driver is never opened as an extra player.
+- If player 1 is unplugged the next controller moves up to player 1.
+- DroidDeck needs `padbridge-slots.patch` (PadBridge slot API) and the new `DualSenseBridge.kt`.

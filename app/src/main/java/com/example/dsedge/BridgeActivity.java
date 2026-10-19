@@ -346,7 +346,8 @@ public class BridgeActivity extends SDLActivity implements NativeBridge.Listener
 
     // ---------- NativeBridge.Listener ----------
 
-    @Override public void onFrame(float[] f) {
+    @Override public void onFrame(float[] f, int slot) {
+        if (slot != 0) return; // the test screen shows player 1
         pad.update(f);
         long now = System.nanoTime();
         if (now - lastSummary > 300_000_000L) {

@@ -11,14 +11,18 @@
 #include <string.h>
 
 #define FRAME_LEN 21
+#define MAX_PADS 4
 
 static JavaVM *g_vm;
 static jclass g_cls;
-static jmethodID g_frame, g_status;
+static jmethodID g_frame, g_status, g_gone, g_info;
 
-static _Atomic int g_rl, g_rr, g_r, g_g, g_b = 255;
-static _Atomic int g_dirty = 1;
-static _Atomic int g_player = -1;   /* -1 = player LEDs off, 0..3 = player 1..4 */
+/* Per-slot output state, written from Java threads, read by the SDL thread. */
+static _Atomic int g_rl[MAX_PADS], g_rr[MAX_PADS];
+static _Atomic int g_rumble_dirty[MAX_PADS];
+static _Atomic int g_led_dirty[MAX_PADS];
+static _Atomic int g_r, g_g, g_b = 255;       /* lightbar colour of slot 0 (the user's setting) */
+static _Atomic int g_player = -1;              /* slot 0 player LEDs: -1 = off, 0..3 = player 1..4 */
 static _Atomic int g_player_dirty = 1;
 
 JNIEXPORT jint JNI_OnLoad(JavaVM *vm, void *reserved)
@@ -29,19 +33,33 @@ JNIEXPORT jint JNI_OnLoad(JavaVM *vm, void *reserved)
     jclass c = (*env)->FindClass(env, "com/example/dsedge/NativeBridge");
     if (!c) return JNI_ERR;
     g_cls = (jclass)(*env)->NewGlobalRef(env, c);
-    g_frame = (*env)->GetStaticMethodID(env, g_cls, "onFrame", "([F)V");
+    g_frame = (*env)->GetStaticMethodID(env, g_cls, "onFrame", "([FI)V");
     g_status = (*env)->GetStaticMethodID(env, g_cls, "onStatus", "(Ljava/lang/String;)V");
+    g_gone = (*env)->GetStaticMethodID(env, g_cls, "onPadGone", "(I)V");
+    g_info = (*env)->GetStaticMethodID(env, g_cls, "onPadInfo", "(IIILjava/lang/String;)V");
     g_vm = vm;
     return JNI_VERSION_1_6;
 }
 
+/* Slot 0: rumble + lightbar colour (the user's light settings). */
 JNIEXPORT void JNICALL Java_com_example_dsedge_NativeBridge_nativeSetOutput(
     JNIEnv *env, jclass cls, jint rl, jint rr, jint r, jint g, jint b)
 {
     (void)env; (void)cls;
-    atomic_store(&g_rl, rl); atomic_store(&g_rr, rr);
+    atomic_store(&g_rl[0], rl); atomic_store(&g_rr[0], rr);
     atomic_store(&g_r, r); atomic_store(&g_g, g); atomic_store(&g_b, b);
-    atomic_store(&g_dirty, 1);
+    atomic_store(&g_rumble_dirty[0], 1);
+    atomic_store(&g_led_dirty[0], 1);
+}
+
+/* Rumble for any slot (0..3). */
+JNIEXPORT void JNICALL Java_com_example_dsedge_NativeBridge_nativeSetRumble(
+    JNIEnv *env, jclass cls, jint slot, jint rl, jint rr)
+{
+    (void)env; (void)cls;
+    if (slot < 0 || slot >= MAX_PADS) return;
+    atomic_store(&g_rl[slot], rl); atomic_store(&g_rr[slot], rr);
+    atomic_store(&g_rumble_dirty[slot], 1);
 }
 
 JNIEXPORT void JNICALL Java_com_example_dsedge_NativeBridge_nativeSetPlayer(JNIEnv *env, jclass cls, jint index)
@@ -73,6 +91,18 @@ static void send_status(JNIEnv *env, const char *msg)
     (*env)->DeleteLocalRef(env, s);
 }
 
+static void send_gone(JNIEnv *env, int slot)
+{
+    (*env)->CallStaticVoidMethod(env, g_cls, g_gone, (jint)slot);
+}
+
+static void send_info(JNIEnv *env, int slot, int vid, int pid, const char *name)
+{
+    jstring s = (*env)->NewStringUTF(env, name ? name : "gamepad");
+    (*env)->CallStaticVoidMethod(env, g_cls, g_info, (jint)slot, (jint)vid, (jint)pid, s);
+    (*env)->DeleteLocalRef(env, s);
+}
+
 /* SDL button -> bit in the frame mask. Bit layout is shared with the first bridge and DroidDeck's client. */
 static const struct { SDL_GamepadButton button; int bit; } BUTTONS[] = {
     { SDL_GAMEPAD_BUTTON_SOUTH, 0 },          /* Cross */
@@ -101,7 +131,7 @@ static const struct { SDL_GamepadButton button; int bit; } BUTTONS[] = {
 static float stick(Sint16 v) { return (float)(((int)v + 32768) >> 8); }                /* 0..255, 128 = centre */
 static float trigger(Sint16 v) { return (float)((int)v * 255 / 32767); }               /* 0..255 */
 
-static void send_frame(JNIEnv *env, SDL_Gamepad *pad, jfloatArray arr)
+static void send_frame(JNIEnv *env, int slot, SDL_Gamepad *pad, jfloatArray arr)
 {
     float f[FRAME_LEN];
     memset(f, 0, sizeof(f));
@@ -142,7 +172,7 @@ static void send_frame(JNIEnv *env, SDL_Gamepad *pad, jfloatArray arr)
     f[20] = (float)ps;
 
     (*env)->SetFloatArrayRegion(env, arr, 0, FRAME_LEN, f);
-    (*env)->CallStaticVoidMethod(env, g_cls, g_frame, arr);
+    (*env)->CallStaticVoidMethod(env, g_cls, g_frame, arr, (jint)slot);
 }
 
 /* SDL's own USB driver gives the gamepad a device path; Android's basic input path does not.
@@ -194,28 +224,129 @@ static bool usable_id(SDL_JoystickID id)
     return !atomic_load(&g_force) || SDL_GetGamepadPathForID(id) != NULL;
 }
 
-static void describe_waiting(char *buf, size_t n)
+/* The same physical controller can show up twice: once through SDL's USB driver and once through Android's basic
+ * input. The Android copy is a duplicate and is never used as its own player. */
+static bool android_duplicate(SDL_JoystickID id)
 {
-    int cnt = 0, ignored = 0;
+    if (SDL_GetGamepadPathForID(id) != NULL) return false;
+    Uint16 vid = SDL_GetGamepadVendorForID(id), pid = SDL_GetGamepadProductForID(id);
+    int cnt = 0, full = 0, rank = 0;
+    bool seen = false;
     SDL_JoystickID *ids = SDL_GetGamepads(&cnt);
-    for (int i = 0; ids && i < cnt; i++) if (!usable_id(ids[i])) ignored++;
+    for (int i = 0; ids && i < cnt; i++) {
+        if (SDL_GetGamepadVendorForID(ids[i]) != vid || SDL_GetGamepadProductForID(ids[i]) != pid) continue;
+        if (SDL_GetGamepadPathForID(ids[i]) != NULL) { full++; continue; }
+        if (ids[i] == id) seen = true;
+        else if (!seen) rank++;
+    }
     SDL_free(ids);
-    snprintf(buf, n, "Forced SDL3 USB mode: waiting for the USB driver. Plug the controller in with a USB-C cable "
-                     "(Bluetooth cannot be used), then tap 'Force SDL3 USB driver' and allow USB access. "
-                     "Ignored Android-only controllers: %d", ignored);
+    return rank < full;
 }
 
-static SDL_Gamepad *open_pad(JNIEnv *env, SDL_JoystickID id, SDL_JoystickID *out_id)
+static SDL_Gamepad *g_pads[MAX_PADS];
+static SDL_JoystickID g_ids[MAX_PADS];
+
+static int rumble_on[MAX_PADS];
+
+static int pad_count(void)
 {
-    SDL_Gamepad *pad = SDL_OpenGamepad(id);
-    if (!pad) return NULL;
-    *out_id = id;
+    int n = 0;
+    for (int i = 0; i < MAX_PADS; i++) if (g_pads[i]) n++;
+    return n;
+}
+
+static int slot_of(SDL_JoystickID id)
+{
+    for (int i = 0; i < MAX_PADS; i++) if (g_pads[i] && g_ids[i] == id) return i;
+    return -1;
+}
+
+static void refresh_status(JNIEnv *env)
+{
+    char diag[560];
+    if (g_pads[0]) {
+        describe(g_pads[0], diag, sizeof(diag));
+        char tail[40];
+        snprintf(tail, sizeof(tail), " | players:%d", pad_count());
+        SDL_strlcat(diag, tail, sizeof(diag));
+    } else {
+        int cnt = 0, ignored = 0;
+        SDL_JoystickID *ids = SDL_GetGamepads(&cnt);
+        for (int i = 0; ids && i < cnt; i++) if (!usable_id(ids[i])) ignored++;
+        SDL_free(ids);
+        snprintf(diag, sizeof(diag),
+                 "Forced SDL3 USB mode: waiting for the USB driver. Plug the controller in with a USB-C cable "
+                 "(Bluetooth cannot be used), then tap 'Force SDL3 USB driver' and allow USB access. "
+                 "Ignored Android-only controllers: %d", ignored);
+        if (!atomic_load(&g_force)) snprintf(diag, sizeof(diag), "Waiting for a controller (plug it in via USB-C)");
+    }
+    if (strcmp(diag, g_last_diag) != 0) {
+        SDL_strlcpy(g_last_diag, diag, sizeof(g_last_diag));
+        send_status(env, diag);
+    }
+}
+
+static void setup_slot(JNIEnv *env, int slot)
+{
+    SDL_Gamepad *pad = g_pads[slot];
     enable_sensors(pad);
-    atomic_store(&g_dirty, 1); /* re-apply lightbar */
-    atomic_store(&g_player_dirty, 1);
-    describe(pad, g_last_diag, sizeof(g_last_diag));
-    send_status(env, g_last_diag);
-    return pad;
+    atomic_store(&g_led_dirty[slot], 1);
+    atomic_store(&g_rumble_dirty[slot], 1);
+    if (slot == 0) atomic_store(&g_player_dirty, 1);
+    else SDL_SetGamepadPlayerIndex(pad, slot);
+    send_info(env, slot, SDL_GetGamepadVendor(pad), SDL_GetGamepadProduct(pad), SDL_GetGamepadName(pad));
+    g_last_diag[0] = 0;
+}
+
+static void open_unopened(JNIEnv *env)
+{
+    int n = 0;
+    SDL_JoystickID *ids = SDL_GetGamepads(&n);
+    for (int i = 0; ids && i < n; i++) {
+        if (slot_of(ids[i]) >= 0 || !usable_id(ids[i]) || android_duplicate(ids[i])) continue;
+        int free_slot = -1;
+        for (int s = 0; s < MAX_PADS; s++) if (!g_pads[s]) { free_slot = s; break; }
+        if (free_slot < 0) break;
+        SDL_Gamepad *p = SDL_OpenGamepad(ids[i]);
+        if (!p) continue;
+        g_pads[free_slot] = p;
+        g_ids[free_slot] = ids[i];
+        setup_slot(env, free_slot);
+    }
+    SDL_free(ids);
+}
+
+/* Closes a slot. If it was player 1, the next controller moves up so DroidDeck's primary pad is never empty. */
+static void close_slot(JNIEnv *env, int slot)
+{
+    if (!g_pads[slot]) return;
+    SDL_RumbleGamepad(g_pads[slot], 0, 0, 0);
+    SDL_CloseGamepad(g_pads[slot]);
+    g_pads[slot] = NULL;
+    atomic_store(&g_rl[slot], 0);
+    atomic_store(&g_rr[slot], 0);
+    send_gone(env, slot);
+    if (slot == 0) {
+        for (int k = 1; k < MAX_PADS; k++) {
+            if (!g_pads[k]) continue;
+            g_pads[0] = g_pads[k];
+            g_ids[0] = g_ids[k];
+            g_pads[k] = NULL;
+            send_gone(env, k);
+            setup_slot(env, 0);
+            break;
+        }
+    }
+    g_last_diag[0] = 0;
+}
+
+/* Drops controllers that are no longer usable (forced mode switched on, or an Android duplicate of a USB-driver pad). */
+static void drop_unusable(JNIEnv *env)
+{
+    for (int s = 0; s < MAX_PADS; s++) {
+        if (!g_pads[s]) continue;
+        if (!usable_id(g_ids[s]) || android_duplicate(g_ids[s])) { rumble_on[s] = 0; close_slot(env, s); }
+    }
 }
 
 int main(int argc, char *argv[])
@@ -240,111 +371,79 @@ int main(int argc, char *argv[])
     }
     send_status(env, "Waiting for a controller (plug it in via USB-C)");
 
+    /* LED colours for players 2..4 (player 1 uses the colour from the settings screen). */
+    static const Uint8 SLOT_COLORS[MAX_PADS][3] = { {0, 0, 255}, {255, 0, 0}, {0, 200, 0}, {255, 160, 0} };
+
     jfloatArray arr = (*env)->NewFloatArray(env, FRAME_LEN);
-    SDL_Gamepad *pad = NULL;
-    SDL_JoystickID pad_id = 0;
-    Uint64 last_scan = 0, last_rumble = 0, last_tick = 0;
-    int rumble_on = 0;
+    Uint64 last_scan = 0, last_tick = 0, last_rumble[MAX_PADS] = {0};
 
     for (;;) {
         SDL_Event e;
         while (SDL_PollEvent(&e)) {
             if (e.type == SDL_EVENT_GAMEPAD_ADDED) {
-                if (!usable_id(e.gdevice.which)) {
-                    /* forced mode: skip the basic Android device */
-                } else if (!pad) {
-                    pad = open_pad(env, e.gdevice.which, &pad_id);
-                } else if (!pad_is_full_driver(pad) && SDL_GetGamepadPathForID(e.gdevice.which) != NULL) {
-                    /* The USB driver showed up after the basic Android device: switch to it. */
-                    SDL_CloseGamepad(pad);
-                    pad = open_pad(env, e.gdevice.which, &pad_id);
+                drop_unusable(env);
+                open_unopened(env);
+            } else if (e.type == SDL_EVENT_GAMEPAD_REMOVED) {
+                int s = slot_of(e.gdevice.which);
+                if (s >= 0) {
+                    rumble_on[s] = 0;
+                    close_slot(env, s);
+                    if (pad_count() == 0) send_status(env, "Controller disconnected");
                 }
-            } else if (e.type == SDL_EVENT_GAMEPAD_REMOVED && pad && e.gdevice.which == pad_id) {
-                SDL_CloseGamepad(pad);
-                pad = NULL;
-                rumble_on = 0;
-                send_status(env, "Controller disconnected");
             }
         }
 
         Uint64 now = SDL_GetTicks();
-        if (!pad && now - last_scan > 1000) { /* fallback in case the ADDED event was missed */
-            last_scan = now;
-            int n = 0;
-            SDL_JoystickID *ids = SDL_GetGamepads(&n);
-            for (int i = 0; ids && i < n && !pad; i++) {
-                if (usable_id(ids[i])) pad = open_pad(env, ids[i], &pad_id);
-            }
-            SDL_free(ids);
-            if (!pad) {
-                char w[300];
-                describe_waiting(w, sizeof(w));
-                if (strcmp(w, g_last_diag) != 0) {
-                    SDL_strlcpy(g_last_diag, w, sizeof(g_last_diag));
-                    send_status(env, w);
-                }
-            }
-        }
-
-        if (pad && !usable_id(pad_id)) { /* force was switched on while on Android input */
-            SDL_CloseGamepad(pad);
-            pad = NULL;
-            rumble_on = 0;
-            g_last_diag[0] = 0;
-        }
 
         if (atomic_exchange(&g_rescan, 0)) { /* restart SDL's gamepad/HIDAPI enumeration */
-            if (pad) { SDL_CloseGamepad(pad); pad = NULL; rumble_on = 0; }
+            for (int s = 0; s < MAX_PADS; s++) {
+                if (g_pads[s]) { SDL_CloseGamepad(g_pads[s]); g_pads[s] = NULL; send_gone(env, s); }
+                rumble_on[s] = 0;
+            }
             SDL_QuitSubSystem(SDL_INIT_GAMEPAD);
             SDL_InitSubSystem(SDL_INIT_GAMEPAD);
             g_last_diag[0] = 0;
             send_status(env, "Rescanning controllers...");
         }
 
-        if (pad && now - last_tick > 1000) {
-            last_tick = now;
-            enable_sensors(pad);
-            if (!pad_is_full_driver(pad)) { /* look for the full USB driver version of the same controller */
-                int n = 0;
-                SDL_JoystickID *ids = SDL_GetGamepads(&n);
-                for (int i = 0; ids && i < n; i++) {
-                    if (ids[i] != pad_id && SDL_GetGamepadPathForID(ids[i]) != NULL) {
-                        SDL_CloseGamepad(pad);
-                        pad = open_pad(env, ids[i], &pad_id);
-                        break;
-                    }
-                }
-                SDL_free(ids);
-            }
-            if (pad) {
-                char diag[512];
-                describe(pad, diag, sizeof(diag));
-                if (strcmp(diag, g_last_diag) != 0) {
-                    SDL_strlcpy(g_last_diag, diag, sizeof(g_last_diag));
-                    send_status(env, diag);
-                }
-            }
+        if (now - last_scan > 1000) { /* fallback in case an ADDED event was missed, and housekeeping */
+            last_scan = now;
+            drop_unusable(env);
+            open_unopened(env);
         }
 
-        if (pad) {
-            SDL_UpdateGamepads();
+        if (now - last_tick > 1000) {
+            last_tick = now;
+            for (int s = 0; s < MAX_PADS; s++) if (g_pads[s]) enable_sensors(g_pads[s]);
+            refresh_status(env);
+        }
 
-            int dirty = atomic_exchange(&g_dirty, 0);
-            int rl = atomic_load(&g_rl), rr = atomic_load(&g_rr);
-            if (dirty) SDL_SetGamepadLED(pad, (Uint8)atomic_load(&g_r), (Uint8)atomic_load(&g_g), (Uint8)atomic_load(&g_b));
-            if (atomic_exchange(&g_player_dirty, 0)) SDL_SetGamepadPlayerIndex(pad, atomic_load(&g_player));
+        if (pad_count() > 0) SDL_UpdateGamepads();
+
+        for (int s = 0; s < MAX_PADS; s++) {
+            SDL_Gamepad *pad = g_pads[s];
+            if (!pad) continue;
+
+            if (atomic_exchange(&g_led_dirty[s], 0)) {
+                if (s == 0) SDL_SetGamepadLED(pad, (Uint8)atomic_load(&g_r), (Uint8)atomic_load(&g_g), (Uint8)atomic_load(&g_b));
+                else SDL_SetGamepadLED(pad, SLOT_COLORS[s][0], SLOT_COLORS[s][1], SLOT_COLORS[s][2]);
+            }
+            if (s == 0 && atomic_exchange(&g_player_dirty, 0)) SDL_SetGamepadPlayerIndex(pad, atomic_load(&g_player));
+
+            int rl = atomic_load(&g_rl[s]), rr = atomic_load(&g_rr[s]);
+            int rdirty = atomic_exchange(&g_rumble_dirty[s], 0);
             if (rl || rr) {
-                if (dirty || now - last_rumble > 400) { /* SDL rumble has a duration, so refresh it */
+                if (rdirty || now - last_rumble[s] > 400) { /* SDL rumble has a duration, so refresh it */
                     SDL_RumbleGamepad(pad, (Uint16)(rl * 257), (Uint16)(rr * 257), 1000);
-                    last_rumble = now;
+                    last_rumble[s] = now;
                 }
-                rumble_on = 1;
-            } else if (rumble_on) {
+                rumble_on[s] = 1;
+            } else if (rumble_on[s]) {
                 SDL_RumbleGamepad(pad, 0, 0, 0);
-                rumble_on = 0;
+                rumble_on[s] = 0;
             }
 
-            send_frame(env, pad, arr);
+            send_frame(env, s, pad, arr);
         }
         SDL_Delay(4);
     }

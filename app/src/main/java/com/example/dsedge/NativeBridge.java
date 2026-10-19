@@ -1,14 +1,14 @@
 package com.example.dsedge;
 
 import java.util.concurrent.CopyOnWriteArrayList;
-import java.util.regex.Matcher;
-import java.util.regex.Pattern;
 
 /** Glue between the native SDL3 loop (libmain.so) and the Java service. */
 public final class NativeBridge {
     public interface Listener {
-        void onFrame(float[] f);
+        void onFrame(float[] f, int slot);
         void onStatus(String s);
+        /** The controller in this slot (0..3) was unplugged. */
+        default void onPadGone(int slot) { }
     }
 
     /** Layout of the float[] frame sent from native code. */
@@ -19,33 +19,51 @@ public final class NativeBridge {
     static final CopyOnWriteArrayList<Listener> listeners = new CopyOnWriteArrayList<>();
     static volatile String lastStatus = "Starting...";
 
-    /** USB ids of the controller SDL is reading, so DroidDeck can ignore the Android duplicate of it. */
-    static volatile int vid, pid;
-    private static final Pattern IDS = Pattern.compile("vid=([0-9a-f]{4}) pid=([0-9a-f]{4})");
+    static final int MAX_PADS = 4;
+    /** USB ids and names of the controller in each slot, so DroidDeck can ignore the Android duplicate of it. */
+    static final int[] vids = new int[MAX_PADS], pids = new int[MAX_PADS];
+    static final String[] names = new String[MAX_PADS];
 
     private static volatile int rumbleStrong, rumbleWeak;
 
     private NativeBridge() {}
 
     /** Called from the native SDL thread. */
-    static void onFrame(float[] f) {
-        if (f.length >= FRAME_LEN) f[0] = Settings.mapMask((int) f[0]);
-        for (Listener l : listeners) l.onFrame(f);
+    static void onFrame(float[] f, int slot) {
+        if (slot == 0 && f.length >= FRAME_LEN) f[0] = Settings.mapMask((int) f[0]);
+        for (Listener l : listeners) l.onFrame(f, slot);
+    }
+
+    /** Called from the native SDL thread when a controller is opened in a slot. */
+    static void onPadInfo(int slot, int vid, int pid, String name) {
+        if (slot < 0 || slot >= MAX_PADS) return;
+        vids[slot] = vid;
+        pids[slot] = pid;
+        names[slot] = name;
+    }
+
+    /** Called from the native SDL thread when a slot's controller goes away. */
+    static void onPadGone(int slot) {
+        if (slot < 0 || slot >= MAX_PADS) return;
+        vids[slot] = 0;
+        pids[slot] = 0;
+        names[slot] = null;
+        for (Listener l : listeners) l.onPadGone(slot);
     }
 
     /** Called from the native SDL thread. */
     static void onStatus(String s) {
         lastStatus = s;
-        Matcher m = IDS.matcher(s);
-        if (m.find()) {
-            vid = Integer.parseInt(m.group(1), 16);
-            pid = Integer.parseInt(m.group(2), 16);
-        } else if (!s.startsWith("Connected")) {
-            vid = 0;
-            pid = 0;
-        }
         for (Listener l : listeners) l.onStatus(s);
     }
+
+    /** Rumble for any player slot (0..3). */
+    static void setRumble(int slot, int strong, int weak) {
+        if (slot <= 0) { setRumble(strong, weak); return; }
+        try { nativeSetRumble(slot, strong, weak); } catch (UnsatisfiedLinkError e) { }
+    }
+
+    static native void nativeSetRumble(int slot, int rumbleStrong, int rumbleWeak);
 
     static void setRumble(int strong, int weak) {
         rumbleStrong = strong;

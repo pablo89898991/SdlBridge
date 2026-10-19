@@ -30,6 +30,7 @@ public class BridgeService extends Service implements NativeBridge.Listener {
     static final int MSG_OUTPUT = 3;
     static final int MSG_FRAME = 10;
     static final int MSG_STATUS = 11;
+    static final int MSG_PAD_GONE = 12;
 
     private static final float RAD_TO_DEG = 57.29578f;
     private static final float G = 9.80665f;
@@ -67,7 +68,7 @@ public class BridgeService extends Service implements NativeBridge.Listener {
             NotificationManager nm = getSystemService(NotificationManager.class);
             nm.createNotificationChannel(new NotificationChannel("bridge", "Controller bridge", NotificationManager.IMPORTANCE_LOW));
             Notification n = new Notification.Builder(this, "bridge")
-                    .setContentTitle("DualSense bridge running")
+                    .setContentTitle("SDL3 controller bridge running")
                     .setSmallIcon(android.R.drawable.stat_sys_data_bluetooth).build();
             if (Build.VERSION.SDK_INT >= 34) startForeground(1, n, ServiceInfo.FOREGROUND_SERVICE_TYPE_SPECIAL_USE);
             else startForeground(1, n);
@@ -94,7 +95,7 @@ public class BridgeService extends Service implements NativeBridge.Listener {
     private void mergeOutput(Bundle b) {
         if (b == null) return;
         if (b.containsKey("rl") || b.containsKey("rr")) {
-            NativeBridge.setRumble(clamp(b.getInt("rl")), clamp(b.getInt("rr")));
+            NativeBridge.setRumble(b.getInt("slot", 0), clamp(b.getInt("rl")), clamp(b.getInt("rr")));
         }
         // A client that sets the lightbar overrides the saved colour until the bridge screen changes it again.
         if (b.containsKey("r") || b.containsKey("g") || b.containsKey("b")) {
@@ -109,7 +110,7 @@ public class BridgeService extends Service implements NativeBridge.Listener {
 
     // ---------- controller -> clients ----------
 
-    @Override public void onFrame(float[] f) {
+    @Override public void onFrame(float[] f, int slot) {
         if (clients.isEmpty() || f.length < NativeBridge.FRAME_LEN) return;
         Bundle b = new Bundle();
         b.putByteArray("raw", new byte[0]);
@@ -171,13 +172,26 @@ public class BridgeService extends Service implements NativeBridge.Listener {
         b.putInt("padClick", click);
 
         int state = (int) f[20];
-        b.putInt("vid", NativeBridge.vid);
-        b.putInt("pid", NativeBridge.pid);
+        b.putInt("slot", slot);
+        b.putInt("vid", NativeBridge.vids[slot]);
+        b.putInt("pid", NativeBridge.pids[slot]);
         b.putInt("battery", Math.max(0, (int) f[19]));
         b.putString("charge", state == 3 ? "charging" : state == 4 ? "full" : state == 1 ? "discharging" : "unknown");
         for (Messenger c : clients) {
             try {
                 Message m = Message.obtain(null, MSG_FRAME);
+                m.setData(b);
+                c.send(m);
+            } catch (RemoteException e) { clients.remove(c); }
+        }
+    }
+
+    @Override public void onPadGone(int slot) {
+        for (Messenger c : clients) {
+            try {
+                Bundle b = new Bundle();
+                b.putInt("slot", slot);
+                Message m = Message.obtain(null, MSG_PAD_GONE);
                 m.setData(b);
                 c.send(m);
             } catch (RemoteException e) { clients.remove(c); }
