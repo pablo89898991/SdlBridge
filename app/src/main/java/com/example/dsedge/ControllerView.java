@@ -122,7 +122,7 @@ public class ControllerView extends View {
 
     @Override protected void onMeasure(int w, int h) {
         int width = MeasureSpec.getSize(w);
-        setMeasuredDimension(width, (int) (width * 0.72f));
+        setMeasuredDimension(width, (int) (width * 0.82f));
     }
 
     // ---------------- labels per controller kind ----------------
@@ -246,16 +246,23 @@ public class ControllerView extends View {
         rbtn(c, 9, 60, 21, 64.5f, B_P3, "L5");
         rbtn(c, 79, 60, 91, 64.5f, B_P4, "R5");
 
+        // ---- bottom readout strip (own background + divider, clear of the diagram) ----
+        rect.set(0, 66.5f, 100, getHeight() / u);
+        fill.setColor(0xFF0B0E13);
+        c.drawRect(rect, fill);
+        stroke.setColor(0xFF2A3340);
+        c.drawLine(3, 66.5f, 97, 66.5f, stroke);
+
         String s1 = connected
-                ? String.format(java.util.Locale.ROOT, "%s  |  Gyro dps  %.0f  %.0f  %.0f",
+                ? String.format(java.util.Locale.ROOT, "%s   ·   Gyro  %.0f, %.0f, %.0f °/s",
                         kindName(), f[7] * 57.29578f, f[8] * 57.29578f, f[9] * 57.29578f)
-                : "No controller";
+                : "No controller connected";
         String s2 = connected
-                ? String.format(java.util.Locale.ROOT, "Accel g  %.2f  %.2f  %.2f    Battery %d%%",
+                ? String.format(java.util.Locale.ROOT, "Accel  %.2f, %.2f, %.2f g   ·   Battery  %d%%",
                         f[10] / 9.80665f, f[11] / 9.80665f, f[12] / 9.80665f, (int) Math.max(0f, f[19]))
                 : "";
-        label(c, s1, 50, 68f, 2.6f);
-        label(c, s2, 50, 71f, 2.6f);
+        label(c, s1, 50, 71.3f, 2.6f);
+        if (!s2.isEmpty()) label(c, s2, 50, 76.3f, 2.6f);
 
         c.restore();
     }
