@@ -65,8 +65,8 @@ final class Settings {
     static volatile boolean forceUsb = true;
     static volatile boolean driverEnabled = true;
     static volatile int presentAs = 0;
-    static final String[] PRESENT_NAMES = { "Steam Deck (default)", "DualSense (native)", "DualShock 4 (native)" };
-    static final int[] PRESENT_PAD_TYPE = { 0, 4, 3 };
+    static final String[] PRESENT_NAMES = { "Steam Deck (default)", "DualSense (native)", "DualSense Edge (native)", "DualShock 4 (native)" };
+    static final int[] PRESENT_PAD_TYPE = { 0, 4, 5, 3 };   // Deck, DualSense, DualSense Edge, DualShock 4
     static volatile int pollMs = 2;
     static final String[] RATE_NAMES = { "250 Hz (low CPU)", "500 Hz (recommended)", "1000 Hz (max)" };
     static final int[] RATE_MS = { 4, 2, 1 };
