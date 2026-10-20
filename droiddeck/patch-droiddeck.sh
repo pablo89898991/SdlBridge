@@ -328,6 +328,9 @@ patch(cpp, [
      '(a DualSense Edge)'),
     ('  uint8_t system = (buttons & 1024 ? 0x01 : 0) | (click ? 0x02 : 0);',
      '  uint8_t system = (buttons & 1024 ? 0x01 : 0) | (click ? 0x02 : 0);\n'
+     '  // DualSense / Edge mute (microphone) button -> bit 0x04 of this byte. The bridge maps the mute\n'
+     '  // button to the Deck QAM bit; DualShock 4 (model 4) has no mute and reuses 0x04 for its counter.\n'
+     '  if (model != 4 && (buttons & SNAPSHOT_QAM_BIT)) system |= 0x04;\n'
      '  // DualSense Edge extra buttons: SDL/Steam read all four from this byte on PID 0x0df2 --\n'
      '  //   0x10 left Fn, 0x20 right Fn, 0x40 left back paddle, 0x80 right back paddle.\n'
      '  // model 6 == the Edge node; plain DualSense (5) and DS4 (4) are left untouched. Deck grips map 1:1:\n'
@@ -387,6 +390,14 @@ patch(cpp, [
     ('kNames[was % 5]',
      'kNames[was % 6]',
      'kNames[was % 6]'),
+    # Sony touchpad (DualShock 4, DualSense, DualSense Edge): one full-width multitouch surface, never
+    # the Deck's two halves. A real Sony pad is a single surface where finger 0 is the primary touch,
+    # so confining finger 1 to the right half loses any touch that lands on it alone. put_sony_touch is
+    # only ever used by Sony pads, so making it full-width for all of them is correct.
+    ('  int half = SONY_TOUCH_WIDTH / 2;\n'
+     '  int px = side * half + (static_cast<int>(x) + 32768) * (half - 1) / 65535;',
+     '  int px = (static_cast<int>(x) + 32768) * (SONY_TOUCH_WIDTH - 1) / 65535;',
+     'int px = (static_cast<int>(x) + 32768) * (SONY_TOUCH_WIDTH - 1) / 65535;'),
 ])
 sys.stdout.write("OK\n")
 PY
@@ -395,6 +406,39 @@ PY
   fi
 else
   warn "fakeinput_steam.cpp / SteamDeckPad.kt / FakeInputWriter.java not found (skipping Edge pad type)"
+fi
+
+# ---------- 10. Unlock ADPF game-thread boosting beyond the Odin 3 ----------
+# GameThreadHints uses Android's PerformanceHintManager to push the game's busiest threads onto the
+# prime CPU cores. It was hard-gated to the Odin 3 (SoC CQ8725S). It is a PURE scheduling hint -- it
+# cannot change how a game runs, so it cannot hurt compatibility -- and it stays behind the user's
+# "game thread hints" setting. Open it to any Qualcomm SoC (same WALT scheduler / power-HAL family),
+# which includes the Snapdragon 8 Gen 2 (SM8550).
+GTH="$PKG/session/GameThreadHints.kt"
+if [ -f "$GTH" ]; then
+  if python3 - "$GTH" <<'PY'
+import sys
+p = sys.argv[1]
+s = open(p, encoding='utf-8').read()
+if "game thread hints: Qualcomm only" not in s:
+    old = '        if (Build.VERSION.SDK_INT < 31 || Build.SOC_MODEL != "CQ8725S") return "game thread hints: Odin 3 only"'
+    new = ('        if (Build.VERSION.SDK_INT < 31) return "game thread hints: needs Android 12+"\n'
+           '        // ADPF boosting is a pure scheduling hint (it cannot change how a game runs), so allow it on\n'
+           '        // any Qualcomm SoC -- the same WALT scheduler / power-HAL family it was tuned on (Odin 3).\n'
+           '        val qualcomm = Build.SOC_MANUFACTURER == "QTI" || Build.SOC_MODEL.startsWith("SM") || Build.SOC_MODEL == "CQ8725S"\n'
+           '        if (!qualcomm) return "game thread hints: Qualcomm only (tuned on Odin 3)"')
+    if s.count(old) != 1:
+        sys.stderr.write("ANCHOR-MISS GameThreadHints device gate (found %d)\n" % s.count(old))
+        sys.exit(3)
+    s = s.replace(old, new, 1)
+    open(p, 'w', encoding='utf-8').write(s)
+sys.stdout.write("OK\n")
+PY
+  then ok "ADPF game-thread boosting unlocked (any Qualcomm SoC)"
+  else die "GameThreadHints patch failed: an upstream anchor moved (see ANCHOR-MISS above)."
+  fi
+else
+  warn "GameThreadHints.kt not found (skipping ADPF unlock)"
 fi
 
 echo

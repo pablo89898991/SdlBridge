@@ -374,8 +374,19 @@ public class BridgeService extends Service implements NativeBridge.Listener {
         // ... and the decoupled version: each half is its own trackpad with local -1..1 coordinates.
         float[] padL = new float[3], padR = new float[3];
         int mode = Settings.touchMode[slot];
+        // A native Sony pad (DualShock 4, DualSense, DualSense Edge) has ONE full-width multitouch
+        // surface, so ignore the Deck split there: keep SDL's finger slots (finger 0 is the primary
+        // touch the game tracks) and map both across the whole pad. padL carries finger 0, padR finger 1.
+        // Only the Steam Deck pad (type 0) keeps the left/right split, since it has two real trackpads.
+        boolean sony = Settings.PRESENT_PAD_TYPE[Settings.presentAs] != 0;
         if (mode != Settings.TOUCH_OFF) {
-            for (int i = 0; i < 2; i++) {
+            if (sony) {
+                for (int i = 0; i < 2; i++) {
+                    if (f[13 + 3 * i] <= 0.5f) continue;
+                    float[] p = (i == 0) ? padL : padR;
+                    p[0] = 1f; p[1] = f[14 + 3 * i] / PAD_W * 2f - 1f; p[2] = f[15 + 3 * i] / PAD_H * 2f - 1f;
+                }
+            } else for (int i = 0; i < 2; i++) {
                 if (f[13 + 3 * i] <= 0.5f) continue;
                 float x = f[14 + 3 * i], y = f[15 + 3 * i];
                 float ny = y / PAD_H * 2f - 1f;
