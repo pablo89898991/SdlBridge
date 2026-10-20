@@ -201,6 +201,16 @@ object DualSenseBridge {
         return false
     }
 
+    /** True when DroidDeck player [deckSlot] is currently driven by a bridge controller (for rumble routing). */
+    @JvmStatic
+    fun isBridgedSlot(deckSlot: Int): Boolean {
+        val now = SystemClock.elapsedRealtime()
+        for (i in 0 until SLOTS) {
+            if (ddSlot[i] == deckSlot && frameMsS[i] != 0L && now - frameMsS[i] < 1000L) return true
+        }
+        return false
+    }
+
     @JvmStatic fun isBridged(e: KeyEvent): Boolean = isBridged(e.device)
     @JvmStatic fun isBridged(e: MotionEvent): Boolean = isBridged(e.device)
 

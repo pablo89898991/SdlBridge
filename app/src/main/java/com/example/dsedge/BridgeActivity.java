@@ -5,6 +5,10 @@ import android.content.Intent;
 import android.hardware.usb.UsbInterface;
 import android.os.Build;
 import android.graphics.Color;
+import android.graphics.Typeface;
+import android.graphics.drawable.GradientDrawable;
+import android.content.res.ColorStateList;
+import android.util.TypedValue;
 import android.hardware.usb.UsbDevice;
 import android.hardware.usb.UsbManager;
 import android.media.AudioDeviceInfo;
@@ -57,6 +61,14 @@ public class BridgeActivity extends SDLActivity implements NativeBridge.Listener
         return new String[] { "SDL3", "main" };
     }
 
+    // ---- design tokens ----
+    private static final int BG = 0xFF0E1116, CARD = 0xFF171C24, CARD2 = 0xFF222A35,
+            ACCENT = 0xFF4FC3F7, TEXT = 0xFFECEFF1, SUB = 0xFF8A97A7,
+            OKC = 0xFF34D399, WARNC = 0xFFF59E0B, BADC = 0xFFEF4444;
+    private TextView statusPill;
+
+    private int dp(int v) { return (int) TypedValue.applyDimension(TypedValue.COMPLEX_UNIT_DIP, v, getResources().getDisplayMetrics()); }
+
     @Override protected void onCreate(Bundle state) {
         super.onCreate(state);
         Settings.init(this);
@@ -64,47 +76,96 @@ public class BridgeActivity extends SDLActivity implements NativeBridge.Listener
 
         LinearLayout root = new LinearLayout(this);
         root.setOrientation(LinearLayout.VERTICAL);
-        root.setBackgroundColor(Color.BLACK);
-        root.setPadding(16, 24, 16, 16);
+        root.setBackgroundColor(BG);
+        root.setPadding(dp(14), dp(18), dp(14), dp(18));
 
-        statusView = text("SDL3BridgeDroidDeck  " + info.tag + "  SDL " + info.sdl + "\n" + NativeBridge.lastStatus, 13f);
-        usbView = text("USB: checking...", 12f);
-        summaryView = text("Press every button and move everything to test it.", 12f);
+        // ---- header bar ----
+        LinearLayout bar = new LinearLayout(this);
+        bar.setOrientation(LinearLayout.HORIZONTAL);
+        bar.setGravity(Gravity.CENTER_VERTICAL);
+        LinearLayout titleCol = new LinearLayout(this);
+        titleCol.setOrientation(LinearLayout.VERTICAL);
+        TextView appTitle = new TextView(this);
+        appTitle.setText("SDL3 Bridge");
+        appTitle.setTextColor(TEXT);
+        appTitle.setTextSize(21f);
+        appTitle.setTypeface(Typeface.DEFAULT_BOLD);
+        TextView appSub = new TextView(this);
+        appSub.setText(info.tag + "   ·   SDL " + info.sdl);
+        appSub.setTextColor(SUB);
+        appSub.setTextSize(11f);
+        titleCol.addView(appTitle);
+        titleCol.addView(appSub);
+        bar.addView(titleCol, new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f));
+        statusPill = new TextView(this);
+        statusPill.setText("Starting");
+        statusPill.setTextColor(0xFF0E1116);
+        statusPill.setTextSize(11f);
+        statusPill.setTypeface(Typeface.DEFAULT_BOLD);
+        statusPill.setPadding(dp(12), dp(6), dp(12), dp(6));
+        statusPill.setBackground(pill(SUB));
+        bar.addView(statusPill);
+        root.addView(bar);
+        spacer(root, 14);
+
+        // ---- controller test card ----
+        LinearLayout test = card(root);
+        statusView = sub(NativeBridge.lastStatus, 12f);
+        usbView = sub("USB: checking...", 11f);
         pad = new ControllerView(this);
-        updateButton = button("Checking for updates...", v -> { if (updateUrl != null) openUrl(updateUrl); });
-
-        root.addView(statusView);
-        root.addView(usbView);
-        root.addView(pad, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
-        root.addView(summaryView);
-
+        test.addView(statusView);
+        LinearLayout padWrap = new LinearLayout(this);
+        padWrap.setBackground(rounded(0xFF0B0E13, dp(10)));
+        padWrap.setPadding(dp(4), dp(4), dp(4), dp(4));
+        padWrap.addView(pad, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
+        LinearLayout.LayoutParams pw = new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+        pw.topMargin = dp(8); pw.bottomMargin = dp(8);
+        test.addView(padWrap, pw);
+        summaryView = sub("Press every button and move everything to test it.", 12f);
+        test.addView(summaryView);
+        test.addView(usbView);
         LinearLayout row = new LinearLayout(this);
         row.setOrientation(LinearLayout.HORIZONTAL);
-        row.addView(button("Rumble", v -> rumbleTest()), weight());
+        LinearLayout.LayoutParams rp = new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+        rp.topMargin = dp(8);
+        row.addView(primaryButton("Test rumble", v -> rumbleTest()), weight());
+        gap(row);
         row.addView(button("Reset", v -> { pad.resetTested(); summaryView.setText(pad.summary()); }), weight());
-        row.addView(button("Update", v -> checkUpdate()), weight());
-        root.addView(row);
+        gap(row);
+        updateButton = button("Update", v -> { if (updateUrl != null) openUrl(updateUrl); else checkUpdate(); });
+        row.addView(updateButton, weight());
+        test.addView(row, rp);
 
-        // ---- Per-player settings (tabs) ----
-        root.addView(header("Player settings"));
+        // ---- per-player settings ----
+        LinearLayout playerCard = card(root);
+        cardTitle(playerCard, "Player settings");
         LinearLayout tabs = new LinearLayout(this);
         tabs.setOrientation(LinearLayout.HORIZONTAL);
+        tabs.setBackground(rounded(CARD2, dp(10)));
+        tabs.setPadding(dp(4), dp(4), dp(4), dp(4));
         playerTabs = new Button[Settings.PLAYERS];
         for (int i = 0; i < Settings.PLAYERS; i++) {
             final int pi = i;
-            Button t = button("P" + (i + 1), v -> showPlayer(pi));
+            Button t = new Button(this);
+            t.setText("P" + (i + 1));
+            t.setAllCaps(false);
+            t.setTextSize(13f);
+            t.setOnClickListener(v -> showPlayer(pi));
             playerTabs[i] = t;
             tabs.addView(t, weight());
         }
-        root.addView(tabs);
+        playerCard.addView(tabs);
         playerBox = new LinearLayout(this);
         playerBox.setOrientation(LinearLayout.VERTICAL);
-        root.addView(playerBox);
+        LinearLayout.LayoutParams pbp = new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+        pbp.topMargin = dp(10);
+        playerCard.addView(playerBox, pbp);
         showPlayer(0);
 
         // ---- SDL3 driver ----
-        root.addView(header("SDL3 driver"));
-        addSpinner(root, "Controller source", new String[] {
+        LinearLayout drv = card(root);
+        cardTitle(drv, "SDL3 driver");
+        addSpinner(drv, "Controller source", new String[] {
             "Forced: only SDL3's USB driver (full features, needs USB cable)",
             "Auto: also accept Android basic input (no gyro/back buttons on Edge)"
         }, Settings.forceUsb ? 0 : 1, v -> {
@@ -112,16 +173,34 @@ public class BridgeActivity extends SDLActivity implements NativeBridge.Listener
             Settings.save();
             NativeBridge.applyForce();
         });
-        root.addView(button("Force SDL3 USB driver", v -> forceUsbDriver()));
-        root.addView(text("Plug the controller in with USB-C, tap the button and allow USB access "
+        drv.addView(primaryButton("Force SDL3 USB driver", v -> forceUsbDriver()));
+        drv.addView(sub("Plug the controller in with USB-C, tap the button and allow USB access "
                 + "(choose 'always' to skip this next time). Works for any SDL3-supported controller.", 11f));
 
+        // ---- Controller mode ----
+        LinearLayout mode = card(root);
+        cardTitle(mode, "Controller mode");
+        addSpinner(mode, "Present controller as", Settings.PRESENT_NAMES, Settings.presentAs, v -> {
+            Settings.presentAs = v;
+            Settings.save();
+        });
+        mode.addView(sub("Steam Deck: the controller is DroidDeck's Deck pad (default, full features). "
+                + "DualSense / DualShock 4: Steam sees a NATIVE Sony controller (hidraw) with gyro, touchpad and back buttons. "
+                + "Give Steam a few seconds, or restart the session, after changing.", 11f));
+        addSpinner(mode, "Poll rate", Settings.RATE_NAMES, rateIndex(), v -> {
+            Settings.pollMs = Settings.RATE_MS[v];
+            Settings.save();
+            NativeBridge.applyRate();
+        });
+        mode.addView(sub("Higher rate = lower gyro/trackpad latency, a little more CPU and battery. No accuracy is lost either way.", 11f));
+
         // ---- Floating bubble ----
-        root.addView(header("Floating bubble"));
-        addCheck(root, "Show floating bubble over other apps", Settings.bubble, on -> {
+        LinearLayout bub = card(root);
+        cardTitle(bub, "Floating bubble");
+        addCheck(bub, "Show floating bubble over other apps", Settings.bubble, on -> {
             if (on) {
                 if (!android.provider.Settings.canDrawOverlays(this)) {
-                    pendingBubble = true;   // enable automatically once permission is granted
+                    pendingBubble = true;
                     try {
                         startActivity(new Intent(android.provider.Settings.ACTION_MANAGE_OVERLAY_PERMISSION,
                                 Uri.parse("package:" + getPackageName())));
@@ -135,39 +214,23 @@ public class BridgeActivity extends SDLActivity implements NativeBridge.Listener
                 startService(new Intent(this, BridgeService.class).setAction("BUBBLE").putExtra("on", false));
             }
         });
-        root.addView(text("A draggable bubble (like a chat head) that shows bridge status and opens this screen "
-                + "on tap. Needs the \"Draw over other apps\" permission; if the switch does nothing, grant it and toggle again.", 11f));
+        bub.addView(sub("A draggable chat-head: tap toggles the SDL3 driver (green on / red off), hold 3s opens this app, "
+                + "drag to the bottom to remove. Needs the \"Draw over other apps\" permission.", 11f));
 
         // ---- USB audio ----
-        root.addView(header("USB audio"));
-        audioView = text(audioInfo(), 12f);
-        root.addView(audioView);
-        root.addView(button("Switch audio output", v -> openAudioOutput()));
-        root.addView(text("When the controller is plugged in via USB-C, Android may route audio to its headset jack/speaker. "
-                + "Android controls routing, so this opens the system output picker to switch between the controller and the phone.", 11f));
+        LinearLayout aud = card(root);
+        cardTitle(aud, "USB audio");
+        audioView = sub(audioInfo(), 12f);
+        aud.addView(audioView);
+        aud.addView(button("Developer options  →  USB audio routing", v -> openDevSettings()));
+        aud.addView(sub("When the controller is plugged in via USB-C, Android may grab it as an audio device and route sound to it. "
+                + "This opens Developer options — turn ON \"Disable USB audio routing\" to keep audio on the phone. "
+                + "(If Developer options aren't enabled, tap Build number 7 times in About phone first.)", 11f));
 
-        // ---- Controller mode ----
-        root.addView(header("Controller mode"));
-        addSpinner(root, "Present controller as", Settings.PRESENT_NAMES, Settings.presentAs, v -> {
-            Settings.presentAs = v;
-            Settings.save();
-        });
-        root.addView(text("Steam Deck: the controller is DroidDeck's Deck pad (default, full features). "
-                + "DualSense / DualShock 4: Steam sees a NATIVE Sony controller (hidraw) with gyro, touchpad and back buttons. "
-                + "Give Steam a few seconds, or restart the session, after changing.", 11f));
-        addSpinner(root, "Poll rate", Settings.RATE_NAMES, rateIndex(), v -> {
-            Settings.pollMs = Settings.RATE_MS[v];
-            Settings.save();
-            NativeBridge.applyRate();
-        });
-        root.addView(text("Higher rate = lower gyro/trackpad latency, a little more CPU and battery. No accuracy is lost either way.", 11f));
-
-        root.addView(updateButton);
-        root.addView(text("Orange = held now, green = worked at least once. "
-                + "Leave this app open once, then switch to DroidDeck.", 11f));
+        root.addView(sub("Orange = held now, green = worked at least once. Leave this app open once, then switch to DroidDeck.", 11f));
 
         ScrollView scroll = new ScrollView(this);
-        scroll.setBackgroundColor(Color.BLACK);
+        scroll.setBackgroundColor(BG);
         scroll.addView(root);
         addContentView(scroll, new ViewGroup.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
 
@@ -175,23 +238,27 @@ public class BridgeActivity extends SDLActivity implements NativeBridge.Listener
         try {
             startForegroundService(new Intent(this, BridgeService.class));
         } catch (RuntimeException ignored) { }
-        NativeBridge.applyDriver();   // restore the on/off driver state (bubble tap)
+        NativeBridge.applyDriver();
         NativeBridge.applyRate();
-        NativeBridge.applyOutput(); // apply the saved light settings
+        NativeBridge.applyOutput();
         checkUpdate();
         ui.post(usbRefresh);
     }
 
     private void showPlayer(int p) {
         uiPlayer = p;
-        for (int i = 0; i < playerTabs.length; i++)
-            playerTabs[i].setBackgroundColor(i == p ? 0xFF1976D2 : 0xFF333333);
+        for (int i = 0; i < playerTabs.length; i++) {
+            boolean sel = i == p;
+            playerTabs[i].setBackground(rounded(sel ? ACCENT : 0x00000000, dp(8)));
+            playerTabs[i].setTextColor(sel ? 0xFF0E1116 : SUB);
+            playerTabs[i].setTypeface(sel ? Typeface.DEFAULT_BOLD : Typeface.DEFAULT);
+        }
         playerBox.removeAllViews();
         buildPlayerSection(playerBox, p);
     }
 
     private void buildPlayerSection(LinearLayout box, final int p) {
-        box.addView(header("Gyro \u2014 Player " + (p + 1)));
+        subhead(box, "Gyro");
         addSlider(box, "Gyro speed % (100 = 1:1)", 800, Settings.gyroGain[p], v -> Settings.gyroGain[p] = Math.max(1, v));
         addSpinner(box, "Invert gyro axes", Settings.GYRO_INV_NAMES, Settings.gyroInvert[p], v -> { Settings.gyroInvert[p] = v; Settings.save(); });
         for (int i = 0; i < 3; i++) {
@@ -201,30 +268,31 @@ public class BridgeActivity extends SDLActivity implements NativeBridge.Listener
         addSpinner(box, "Apply remap/invert to accelerometer too", new String[] { "Yes (recommended)", "No" },
                 Settings.accelFollows[p] ? 0 : 1, v -> { Settings.accelFollows[p] = v == 0; Settings.save(); });
         addSlider(box, "Gyro deadzone (deg/s)", 50, Settings.gyroDeadzone[p], v -> Settings.gyroDeadzone[p] = v);
-        gyroCalibView = text(calibLabel(p), 11f);
+        gyroCalibView = sub(calibLabel(p), 11f);
         LinearLayout gc = new LinearLayout(this);
         gc.setOrientation(LinearLayout.HORIZONTAL);
         gc.addView(button("Calibrate (hold still)", v -> startGyroCalibration()), weight());
+        gap(gc);
         gc.addView(button("Reset calibration", v -> resetGyroCalibration()), weight());
         box.addView(gc);
         box.addView(gyroCalibView);
-        box.addView(text("Calibration samples the controller shown above (player 1 slot). Deadzone ignores tiny drift.", 11f));
+        box.addView(sub("Calibration samples the controller shown above (player 1 slot). Deadzone ignores tiny drift.", 11f));
 
-        box.addView(header("Touchpad \u2014 Player " + (p + 1)));
+        subhead(box, "Touchpad");
         addCheck(box, "Invert touchpad X (left/right)", Settings.touchInvX[p], on -> Settings.touchInvX[p] = on);
         addCheck(box, "Invert touchpad Y (up/down)", Settings.touchInvY[p], on -> Settings.touchInvY[p] = on);
         addCheck(box, "Swap touchpad X and Y (before invert)", Settings.touchSwap[p], on -> Settings.touchSwap[p] = on);
         addSpinner(box, "Layout", Settings.TOUCH_NAMES, Settings.touchMode[p], v -> { Settings.touchMode[p] = v; Settings.save(); pad.postInvalidate(); });
 
-        box.addView(header("Button remap \u2014 Player " + (p + 1)));
-        box.addView(text("Map any controller button to a Deck grip (L4/R4/L5/R5) or a trackpad touch/click. "
+        subhead(box, "Button remap");
+        box.addView(sub("Map any controller button to a Deck grip (L4/R4/L5/R5) or a trackpad touch/click. "
                 + "Useful for extra buttons like a Flydigi's C and Z.", 11f));
         for (int i = 0; i < Settings.REMAP_COUNT; i++) {
             final int target = i;
             addSpinner(box, Settings.REMAP_TARGETS[i] + " pressed by", Settings.SRC_NAMES, Settings.remap[p][i], v -> { Settings.remap[p][target] = v; Settings.save(); });
         }
 
-        box.addView(header("Light \u2014 Player " + (p + 1)));
+        subhead(box, "Light");
         addSlider(box, "Red", 255, Settings.lightR[p], v -> { Settings.lightR[p] = v; applyLight(p); });
         addSlider(box, "Green", 255, Settings.lightG[p], v -> { Settings.lightG[p] = v; applyLight(p); });
         addSlider(box, "Blue", 255, Settings.lightB[p], v -> { Settings.lightB[p] = v; applyLight(p); });
@@ -234,21 +302,77 @@ public class BridgeActivity extends SDLActivity implements NativeBridge.Listener
 
     private void applyLight(int p) { NativeBridge.applyOutput(p); }
 
-    // ---------- small UI helpers ----------
+    // ---------- styled UI helpers ----------
+
+    private GradientDrawable rounded(int color, int radius) {
+        GradientDrawable g = new GradientDrawable();
+        g.setColor(color);
+        g.setCornerRadius(radius);
+        return g;
+    }
+
+    private GradientDrawable pill(int color) {
+        GradientDrawable g = new GradientDrawable();
+        g.setColor(color);
+        g.setCornerRadius(dp(20));
+        return g;
+    }
+
+    private LinearLayout card(LinearLayout parent) {
+        LinearLayout c = new LinearLayout(this);
+        c.setOrientation(LinearLayout.VERTICAL);
+        c.setBackground(rounded(CARD, dp(16)));
+        c.setPadding(dp(16), dp(14), dp(16), dp(14));
+        LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+        lp.bottomMargin = dp(12);
+        parent.addView(c, lp);
+        return c;
+    }
+
+    private void cardTitle(LinearLayout card, String s) {
+        TextView t = new TextView(this);
+        t.setText(s.toUpperCase(java.util.Locale.ROOT));
+        t.setTextColor(ACCENT);
+        t.setTextSize(12f);
+        t.setTypeface(Typeface.DEFAULT_BOLD);
+        t.setLetterSpacing(0.08f);
+        t.setPadding(0, 0, 0, dp(8));
+        card.addView(t);
+    }
+
+    private void subhead(LinearLayout box, String s) {
+        TextView t = new TextView(this);
+        t.setText(s);
+        t.setTextColor(TEXT);
+        t.setTextSize(14f);
+        t.setTypeface(Typeface.DEFAULT_BOLD);
+        t.setPadding(0, dp(14), 0, dp(4));
+        box.addView(t);
+    }
+
+    private void spacer(LinearLayout parent, int h) {
+        View v = new View(this);
+        parent.addView(v, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(h)));
+    }
+
+    private void gap(LinearLayout row) {
+        View v = new View(this);
+        row.addView(v, new LinearLayout.LayoutParams(dp(8), 1));
+    }
 
     private TextView text(String s, float size) {
         TextView t = new TextView(this);
-        t.setTextColor(Color.WHITE);
+        t.setTextColor(TEXT);
         t.setTextSize(size);
-        t.setGravity(Gravity.START);
-        t.setPadding(0, 6, 0, 6);
+        t.setPadding(0, dp(4), 0, dp(4));
         t.setText(s);
         return t;
     }
 
-    private TextView header(String s) {
-        TextView t = text(s, 16f);
-        t.setPadding(0, 28, 0, 6);
+    private TextView sub(String s, float size) {
+        TextView t = text(s, size);
+        t.setTextColor(SUB);
+        t.setLineSpacing(dp(2), 1f);
         return t;
     }
 
@@ -256,7 +380,20 @@ public class BridgeActivity extends SDLActivity implements NativeBridge.Listener
         Button b = new Button(this);
         b.setText(s);
         b.setAllCaps(false);
+        b.setTextSize(13f);
+        b.setTextColor(TEXT);
+        b.setBackground(rounded(CARD2, dp(10)));
+        b.setStateListAnimator(null);
+        b.setPadding(dp(14), dp(10), dp(14), dp(10));
         b.setOnClickListener(l);
+        return b;
+    }
+
+    private Button primaryButton(String s, View.OnClickListener l) {
+        Button b = button(s, l);
+        b.setBackground(rounded(ACCENT, dp(10)));
+        b.setTextColor(0xFF0E1116);
+        b.setTypeface(Typeface.DEFAULT_BOLD);
         return b;
     }
 
@@ -264,26 +401,47 @@ public class BridgeActivity extends SDLActivity implements NativeBridge.Listener
         return new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f);
     }
 
+    private ArrayAdapter<String> styledAdapter(String[] names) {
+        return new ArrayAdapter<String>(this, android.R.layout.simple_spinner_item, names) {
+            @Override public View getView(int pos, View cv, ViewGroup parent) {
+                TextView t = (TextView) super.getView(pos, cv, parent);
+                t.setTextColor(TEXT); t.setTextSize(13f);
+                return t;
+            }
+            @Override public View getDropDownView(int pos, View cv, ViewGroup parent) {
+                TextView t = (TextView) super.getDropDownView(pos, cv, parent);
+                t.setTextColor(0xFF10151C); t.setTextSize(14f);
+                t.setPadding(dp(14), dp(12), dp(14), dp(12));
+                return t;
+            }
+        };
+    }
+
     private void addSpinner(LinearLayout root, String label, String[] names, int selected, final IntSink sink) {
-        root.addView(text(label, 12f));
+        root.addView(sub(label, 12f));
         Spinner sp = new Spinner(this);
-        sp.setAdapter(new ArrayAdapter<String>(this, android.R.layout.simple_spinner_dropdown_item, names));
+        sp.setAdapter(styledAdapter(names));
         sp.setSelection(selected);
+        sp.setBackground(rounded(CARD2, dp(8)));
+        LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+        lp.bottomMargin = dp(6);
         sp.setOnItemSelectedListener(new AdapterView.OnItemSelectedListener() {
             @Override public void onItemSelected(AdapterView<?> parent, View view, int position, long id) { sink.set(position); }
             @Override public void onNothingSelected(AdapterView<?> parent) { }
         });
-        root.addView(sp);
+        root.addView(sp, lp);
     }
 
     private void addSlider(LinearLayout root, final String label, int max, int value, final IntSink sink) {
-        final TextView t = text(label + ": " + value, 12f);
+        final TextView t = sub(label + ":  " + value, 12f);
         SeekBar sb = new SeekBar(this);
         sb.setMax(max);
         sb.setProgress(value);
+        sb.setProgressTintList(ColorStateList.valueOf(ACCENT));
+        sb.setThumbTintList(ColorStateList.valueOf(ACCENT));
         sb.setOnSeekBarChangeListener(new SeekBar.OnSeekBarChangeListener() {
             @Override public void onProgressChanged(SeekBar s, int v, boolean fromUser) {
-                t.setText(label + ": " + v);
+                t.setText(label + ":  " + v);
                 if (fromUser) sink.set(v);
             }
             @Override public void onStartTrackingTouch(SeekBar s) { }
@@ -298,7 +456,10 @@ public class BridgeActivity extends SDLActivity implements NativeBridge.Listener
     private void addCheck(LinearLayout root, String label, boolean value, final BoolSink sink) {
         CheckBox c = new CheckBox(this);
         c.setText(label);
-        c.setTextColor(Color.WHITE);
+        c.setTextColor(TEXT);
+        c.setTextSize(13f);
+        c.setButtonTintList(ColorStateList.valueOf(ACCENT));
+        c.setPadding(dp(6), dp(6), 0, dp(6));
         c.setChecked(value);
         c.setOnCheckedChangeListener((v, on) -> { sink.set(on); Settings.save(); });
         root.addView(c);
@@ -359,18 +520,17 @@ public class BridgeActivity extends SDLActivity implements NativeBridge.Listener
         }
     }
 
-    /** Opens Android's media output switcher so the user can route audio to the controller or phone. */
-    private void openAudioOutput() {
-        // The media output panel: works on most devices; fall back to Sound settings.
-        Intent panel = new Intent("com.android.settings.panel.action.MEDIA_OUTPUT")
-                .putExtra("com.android.settings.panel.extra.PACKAGE_NAME", getPackageName())
-                .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+    /** Opens Developer options, where "Disable USB audio routing" keeps audio on the phone. */
+    private void openDevSettings() {
+        // There is no public intent to a single developer toggle, so open the Developer options screen.
         try {
-            startActivity(panel);
+            startActivity(new Intent(android.provider.Settings.ACTION_APPLICATION_DEVELOPMENT_SETTINGS)
+                    .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK));
             return;
         } catch (RuntimeException ignored) { }
+        // Developer options not enabled or unavailable: fall back to the main Settings app.
         try {
-            startActivity(new Intent(android.provider.Settings.ACTION_SOUND_SETTINGS)
+            startActivity(new Intent(android.provider.Settings.ACTION_SETTINGS)
                     .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK));
         } catch (RuntimeException ignored) { }
     }
@@ -532,8 +692,20 @@ public class BridgeActivity extends SDLActivity implements NativeBridge.Listener
 
     @Override public void onStatus(final String s) {
         ui.post(() -> {
-            statusView.setText("SDL3BridgeDroidDeck\n" + s);
-            if (s.startsWith("Controller disconnected") || s.startsWith("Waiting")) pad.setDisconnected();
+            statusView.setText(s);
+            boolean off = s.contains("driver OFF");
+            boolean waiting = s.startsWith("Controller disconnected") || s.startsWith("Waiting") || s.startsWith("Starting");
+            if (off) {
+                statusPill.setText("Driver off");
+                statusPill.setBackground(pill(BADC));
+            } else if (waiting) {
+                statusPill.setText("Waiting");
+                statusPill.setBackground(pill(WARNC));
+            } else {
+                statusPill.setText("Connected");
+                statusPill.setBackground(pill(OKC));
+            }
+            if (off || waiting) pad.setDisconnected();
         });
     }
 }
