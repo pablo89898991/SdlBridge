@@ -394,6 +394,7 @@ public class BridgeService extends Service implements NativeBridge.Listener {
 
         int state = (int) f[20];
         b.putInt("slot", slot);
+        b.putInt("sep", Settings.separateController ? 1 : 0);
         b.putInt("vid", NativeBridge.vids[slot]);
         b.putInt("pid", NativeBridge.pids[slot]);
         b.putInt("battery", Math.max(0, (int) f[19]));

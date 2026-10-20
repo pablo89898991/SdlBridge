@@ -28,6 +28,7 @@ final class Settings {
     static final int[] src = new int[4];
     static volatile boolean forceUsb = true;
     static volatile boolean driverEnabled = true;   // bubble tap toggles this: on = forced SDL3 USB, off = driver released
+    static volatile boolean separateController = false;  // present to DroidDeck as its own controller, not the Steam Deck pad
     static volatile boolean bubble = false;          // floating draw-over bubble
     static volatile int bubbleX = 24, bubbleY = 160;  // last bubble position (px)
     static volatile boolean touchInvX, touchInvY, touchSwap;
@@ -55,6 +56,7 @@ final class Settings {
         }
         forceUsb = prefs.getBoolean("forceUsb", true);
         driverEnabled = prefs.getBoolean("driverEnabled", true);
+        separateController = prefs.getBoolean("separateController", false);
         bubble = prefs.getBoolean("bubble", false);
         bubbleX = prefs.getInt("bubbleX", 24);
         bubbleY = prefs.getInt("bubbleY", 160);
@@ -84,6 +86,7 @@ final class Settings {
         for (int i = 0; i < 4; i++) e.putInt("src" + i, src[i]);
         e.putBoolean("forceUsb", forceUsb);
         e.putBoolean("driverEnabled", driverEnabled);
+        e.putBoolean("separateController", separateController);
         e.putBoolean("bubble", bubble).putInt("bubbleX", bubbleX).putInt("bubbleY", bubbleY);
         e.putBoolean("touchInvX", touchInvX).putBoolean("touchInvY", touchInvY).putBoolean("touchSwap", touchSwap);
         for (int i = 0; i < 3; i++) e.putInt("gyroMap" + i, gyroMap[i]);

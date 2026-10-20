@@ -121,3 +121,11 @@ capability report from the native layer, so new SDL3-supported controllers work 
 plugged in via USB-C) and a "Switch audio output" button that opens Android's media-output picker.
 Android controls routing, so a normal app can't force game audio to a device directly; this is the
 supported way to switch between the controller and the phone.
+
+## Separate controller mode
+
+"Controller mode" -> "Present as a separate controller": instead of driving DroidDeck's Steam Deck pad,
+the controller claims its own DroidDeck slot and appears as a distinct controller in Steam, carrying full
+back buttons (L4/R4/L5/R5), both trackpads with clicks, and gyro. Restart the DroidDeck session after
+toggling. Needs the DroidDeck side (sdl3/DualSenseBridge.kt) from the current patcher. Note: it is a Steam
+virtual gamepad entry, not a native-DualSense hidraw device.

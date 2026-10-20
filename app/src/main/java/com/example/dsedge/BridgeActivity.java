@@ -156,6 +156,12 @@ public class BridgeActivity extends SDLActivity implements NativeBridge.Listener
         root.addView(text("When the controller is plugged in via USB-C, Android may route audio to its headset jack/speaker. "
                 + "Android controls routing, so this opens the system output picker to switch between the controller and the phone.", 11f));
 
+        // ---- Controller mode ----
+        root.addView(header("Controller mode"));
+        addCheck(root, "Present as a separate controller (own entry in Steam)", Settings.separateController, on -> Settings.separateController = on);
+        root.addView(text("Off: the controller drives DroidDeck's Steam Deck pad (default). On: it appears as its own "
+                + "controller in Steam with full back buttons, trackpads and gyro. Restart the DroidDeck session after changing.", 11f));
+
         // ---- Touchpad ----
         root.addView(header("Touchpad"));
         addCheck(root, "Invert touchpad X (left/right)", Settings.touchInvX, on -> Settings.touchInvX = on);
