@@ -129,3 +129,10 @@ the controller claims its own DroidDeck slot and appears as a distinct controlle
 back buttons (L4/R4/L5/R5), both trackpads with clicks, and gyro. Restart the DroidDeck session after
 toggling. Needs the DroidDeck side (sdl3/DualSenseBridge.kt) from the current patcher. Note: it is a Steam
 virtual gamepad entry, not a native-DualSense hidraw device.
+
+## Performance (gyro / trackpad latency)
+
+- **Poll rate** ("Controller mode" section): 250 / 500 / 1000 Hz (default 500). Higher = lower gyro/trackpad
+  latency for more CPU/battery; no accuracy is lost either way.
+- The DroidDeck client handles bridge frames on a dedicated thread (not the UI thread), which removes jitter.
+- Stick throttle is 4 ms and trackpad change-detection is 11-bit for smoother motion.

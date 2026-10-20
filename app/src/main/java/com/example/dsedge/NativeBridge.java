@@ -123,6 +123,13 @@ public final class NativeBridge {
 
     static native void nativeSetDriver(int on);
 
+    /** Controller poll rate (loop period in ms). */
+    static void applyRate() {
+        try { nativeSetPollMs(Settings.pollMs); } catch (UnsatisfiedLinkError e) { }
+    }
+
+    static native void nativeSetPollMs(int ms);
+
     /** rumble strong/weak 0..255, lightbar rgb 0..255. */
     static native void nativeSetOutput(int rumbleStrong, int rumbleWeak, int r, int g, int b);
 

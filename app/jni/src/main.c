@@ -86,6 +86,15 @@ JNIEXPORT void JNICALL Java_com_example_dsedge_NativeBridge_nativeRescan(JNIEnv 
 }
 
 static atomic_int g_driver_off = 0;   /* 1 = SDL3 (HIDAPI) driver disabled: release the controller to Android */
+static atomic_int g_poll_ms = 2;      /* loop period: 2ms = 500Hz (lower = lower latency, more CPU) */
+
+JNIEXPORT void JNICALL Java_com_example_dsedge_NativeBridge_nativeSetPollMs(JNIEnv *env, jclass c, jint ms)
+{
+    (void)env; (void)c;
+    if (ms < 1) ms = 1;
+    if (ms > 16) ms = 16;
+    atomic_store(&g_poll_ms, ms);
+}
 
 /* Hard on/off for the SDL3 driver. Off disables HIDAPI and releases the controller; on re-enables it. */
 JNIEXPORT void JNICALL Java_com_example_dsedge_NativeBridge_nativeSetDriver(JNIEnv *env, jclass c, jint on)
@@ -508,7 +517,7 @@ int main(int argc, char *argv[])
 
             send_frame(env, s, pad, arr);
         }
-        SDL_Delay(4);
+        SDL_Delay((Uint32)atomic_load(&g_poll_ms));
     }
     return 0;
 }

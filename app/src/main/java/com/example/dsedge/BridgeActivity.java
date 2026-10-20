@@ -161,6 +161,12 @@ public class BridgeActivity extends SDLActivity implements NativeBridge.Listener
         addCheck(root, "Present as a separate controller (own entry in Steam)", Settings.separateController, on -> Settings.separateController = on);
         root.addView(text("Off: the controller drives DroidDeck's Steam Deck pad (default). On: it appears as its own "
                 + "controller in Steam with full back buttons, trackpads and gyro. Restart the DroidDeck session after changing.", 11f));
+        addSpinner(root, "Poll rate", Settings.RATE_NAMES, rateIndex(), v -> {
+            Settings.pollMs = Settings.RATE_MS[v];
+            Settings.save();
+            NativeBridge.applyRate();
+        });
+        root.addView(text("Higher rate = lower gyro/trackpad latency, a little more CPU and battery. No accuracy is lost either way.", 11f));
 
         // ---- Touchpad ----
         root.addView(header("Touchpad"));
@@ -207,6 +213,7 @@ public class BridgeActivity extends SDLActivity implements NativeBridge.Listener
             startForegroundService(new Intent(this, BridgeService.class));
         } catch (RuntimeException ignored) { }
         NativeBridge.applyDriver();   // restore the on/off driver state (bubble tap)
+        NativeBridge.applyRate();
         NativeBridge.applyOutput(); // apply the saved light settings
         checkUpdate();
         ui.post(usbRefresh);
@@ -316,6 +323,11 @@ public class BridgeActivity extends SDLActivity implements NativeBridge.Listener
     }
 
     /** Lists any USB / headset audio outputs Android currently sees (e.g. the controller's audio device). */
+    private int rateIndex() {
+        for (int i = 0; i < Settings.RATE_MS.length; i++) if (Settings.RATE_MS[i] == Settings.pollMs) return i;
+        return 1;
+    }
+
     private String audioInfo() {
         try {
             AudioManager am = (AudioManager) getSystemService(AUDIO_SERVICE);
