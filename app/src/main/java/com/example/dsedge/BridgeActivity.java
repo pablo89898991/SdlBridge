@@ -45,6 +45,10 @@ public class BridgeActivity extends SDLActivity implements NativeBridge.Listener
     private static final int CALIB_SAMPLES = 180;      // ~0.7s at 4ms/frame
     private volatile int calibCount = -1;              // -1 = not calibrating
     private final float[] calibSum = new float[3];
+    private int calibPlayer = 0;
+    private int uiPlayer = 0;
+    private LinearLayout playerBox;
+    private Button[] playerTabs;
     private TextView gyroCalibView;
     private boolean pendingBubble;   // user asked for the bubble; waiting for overlay permission
     private TextView audioView;
@@ -81,6 +85,23 @@ public class BridgeActivity extends SDLActivity implements NativeBridge.Listener
         row.addView(button("Update", v -> checkUpdate()), weight());
         root.addView(row);
 
+        // ---- Per-player settings (tabs) ----
+        root.addView(header("Player settings"));
+        LinearLayout tabs = new LinearLayout(this);
+        tabs.setOrientation(LinearLayout.HORIZONTAL);
+        playerTabs = new Button[Settings.PLAYERS];
+        for (int i = 0; i < Settings.PLAYERS; i++) {
+            final int pi = i;
+            Button t = button("P" + (i + 1), v -> showPlayer(pi));
+            playerTabs[i] = t;
+            tabs.addView(t, weight());
+        }
+        root.addView(tabs);
+        playerBox = new LinearLayout(this);
+        playerBox.setOrientation(LinearLayout.VERTICAL);
+        root.addView(playerBox);
+        showPlayer(0);
+
         // ---- SDL3 driver ----
         root.addView(header("SDL3 driver"));
         addSpinner(root, "Controller source", new String[] {
@@ -94,37 +115,6 @@ public class BridgeActivity extends SDLActivity implements NativeBridge.Listener
         root.addView(button("Force SDL3 USB driver", v -> forceUsbDriver()));
         root.addView(text("Plug the controller in with USB-C, tap the button and allow USB access "
                 + "(choose 'always' to skip this next time). Works for any SDL3-supported controller.", 11f));
-
-        // ---- Gyro ----
-        root.addView(header("Gyro (sent to DroidDeck)"));
-        addSlider(root, "Gyro speed % (100 = 1:1)", 800, Settings.gyroGain, v -> Settings.gyroGain = Math.max(1, v));
-        addSpinner(root, "Invert gyro axes", Settings.GYRO_INV_NAMES, Settings.gyroInvert, v -> {
-            Settings.gyroInvert = v;
-            Settings.save();
-        });
-        for (int i = 0; i < 3; i++) {
-            final int out = i;
-            addSpinner(root, "DroidDeck gyro " + "XYZ".charAt(i) + " comes from", Settings.AXIS_NAMES, Settings.gyroMap[i], v -> {
-                Settings.gyroMap[out] = v;
-                Settings.save();
-            });
-        }
-        addSpinner(root, "Apply remap and invert to accelerometer too", new String[] { "Yes (recommended)", "No" },
-                Settings.accelFollows ? 0 : 1, v -> {
-            Settings.accelFollows = v == 0;
-            Settings.save();
-        });
-        root.addView(text("Takes effect immediately. If aiming feels too slow, raise it; if an axis moves the wrong way, invert it.", 11f));
-        addSlider(root, "Gyro deadzone (deg/s)", 50, Settings.gyroDeadzone, v -> Settings.gyroDeadzone = v);
-        gyroCalibView = text(calibLabel(), 11f);
-        LinearLayout gcrow = new LinearLayout(this);
-        gcrow.setOrientation(LinearLayout.HORIZONTAL);
-        gcrow.addView(button("Calibrate (hold still)", v -> startGyroCalibration()), weight());
-        gcrow.addView(button("Reset calibration", v -> resetGyroCalibration()), weight());
-        root.addView(gcrow);
-        root.addView(gyroCalibView);
-        root.addView(text("Deadzone ignores tiny gyro motion so the view does not drift when you hold still. "
-                + "Calibrate: lay the controller flat and still, then tap; it measures the resting drift and subtracts it.", 11f));
 
         // ---- Floating bubble ----
         root.addView(header("Floating bubble"));
@@ -158,46 +148,19 @@ public class BridgeActivity extends SDLActivity implements NativeBridge.Listener
 
         // ---- Controller mode ----
         root.addView(header("Controller mode"));
-        addCheck(root, "Present as a separate controller (own entry in Steam)", Settings.separateController, on -> Settings.separateController = on);
-        root.addView(text("Off: the controller drives DroidDeck's Steam Deck pad (default). On: it appears as its own "
-                + "controller in Steam with full back buttons, trackpads and gyro. Restart the DroidDeck session after changing.", 11f));
+        addSpinner(root, "Present controller as", Settings.PRESENT_NAMES, Settings.presentAs, v -> {
+            Settings.presentAs = v;
+            Settings.save();
+        });
+        root.addView(text("Steam Deck: the controller is DroidDeck's Deck pad (default, full features). "
+                + "DualSense / DualShock 4: Steam sees a NATIVE Sony controller (hidraw) with gyro, touchpad and back buttons. "
+                + "Give Steam a few seconds, or restart the session, after changing.", 11f));
         addSpinner(root, "Poll rate", Settings.RATE_NAMES, rateIndex(), v -> {
             Settings.pollMs = Settings.RATE_MS[v];
             Settings.save();
             NativeBridge.applyRate();
         });
         root.addView(text("Higher rate = lower gyro/trackpad latency, a little more CPU and battery. No accuracy is lost either way.", 11f));
-
-        // ---- Touchpad ----
-        root.addView(header("Touchpad"));
-        addCheck(root, "Invert touchpad X (left/right)", Settings.touchInvX, on -> Settings.touchInvX = on);
-        addCheck(root, "Invert touchpad Y (up/down)", Settings.touchInvY, on -> Settings.touchInvY = on);
-        addCheck(root, "Swap touchpad X and Y (applied before invert)", Settings.touchSwap, on -> Settings.touchSwap = on);
-        addSpinner(root, "Layout", Settings.TOUCH_NAMES, Settings.touchMode, v -> {
-            Settings.touchMode = v;
-            Settings.save();
-            pad.postInvalidate();
-        });
-
-        // ---- Extra buttons ----
-        root.addView(header("Extra buttons (L4 / R4 / L5 / R5)"));
-        root.addView(text("The Edge's own back and Fn buttons always count. You can also let another button press them, "
-                + "which helps if the controller does not report the Edge buttons.", 11f));
-        for (int i = 0; i < 4; i++) {
-            final int target = i;
-            addSpinner(root, Settings.TARGET_NAMES[i] + " is also pressed by", Settings.SRC_NAMES, Settings.src[i], v -> {
-                Settings.src[target] = v;
-                Settings.save();
-            });
-        }
-
-        // ---- Light ----
-        root.addView(header("Light"));
-        addSlider(root, "Red", 255, Settings.lightR, v -> { Settings.lightR = v; lightChanged(); });
-        addSlider(root, "Green", 255, Settings.lightG, v -> { Settings.lightG = v; lightChanged(); });
-        addSlider(root, "Blue", 255, Settings.lightB, v -> { Settings.lightB = v; lightChanged(); });
-        addSlider(root, "Brightness %", 100, Settings.brightness, v -> { Settings.brightness = v; lightChanged(); });
-        addSpinner(root, "Player LEDs", Settings.PLAYER_NAMES, Settings.player, v -> { Settings.player = v; lightChanged(); });
 
         root.addView(updateButton);
         root.addView(text("Orange = held now, green = worked at least once. "
@@ -218,6 +181,58 @@ public class BridgeActivity extends SDLActivity implements NativeBridge.Listener
         checkUpdate();
         ui.post(usbRefresh);
     }
+
+    private void showPlayer(int p) {
+        uiPlayer = p;
+        for (int i = 0; i < playerTabs.length; i++)
+            playerTabs[i].setBackgroundColor(i == p ? 0xFF1976D2 : 0xFF333333);
+        playerBox.removeAllViews();
+        buildPlayerSection(playerBox, p);
+    }
+
+    private void buildPlayerSection(LinearLayout box, final int p) {
+        box.addView(header("Gyro \u2014 Player " + (p + 1)));
+        addSlider(box, "Gyro speed % (100 = 1:1)", 800, Settings.gyroGain[p], v -> Settings.gyroGain[p] = Math.max(1, v));
+        addSpinner(box, "Invert gyro axes", Settings.GYRO_INV_NAMES, Settings.gyroInvert[p], v -> { Settings.gyroInvert[p] = v; Settings.save(); });
+        for (int i = 0; i < 3; i++) {
+            final int out = i;
+            addSpinner(box, "DroidDeck gyro " + "XYZ".charAt(i) + " comes from", Settings.AXIS_NAMES, Settings.gyroMap[p][i], v -> { Settings.gyroMap[p][out] = v; Settings.save(); });
+        }
+        addSpinner(box, "Apply remap/invert to accelerometer too", new String[] { "Yes (recommended)", "No" },
+                Settings.accelFollows[p] ? 0 : 1, v -> { Settings.accelFollows[p] = v == 0; Settings.save(); });
+        addSlider(box, "Gyro deadzone (deg/s)", 50, Settings.gyroDeadzone[p], v -> Settings.gyroDeadzone[p] = v);
+        gyroCalibView = text(calibLabel(p), 11f);
+        LinearLayout gc = new LinearLayout(this);
+        gc.setOrientation(LinearLayout.HORIZONTAL);
+        gc.addView(button("Calibrate (hold still)", v -> startGyroCalibration()), weight());
+        gc.addView(button("Reset calibration", v -> resetGyroCalibration()), weight());
+        box.addView(gc);
+        box.addView(gyroCalibView);
+        box.addView(text("Calibration samples the controller shown above (player 1 slot). Deadzone ignores tiny drift.", 11f));
+
+        box.addView(header("Touchpad \u2014 Player " + (p + 1)));
+        addCheck(box, "Invert touchpad X (left/right)", Settings.touchInvX[p], on -> Settings.touchInvX[p] = on);
+        addCheck(box, "Invert touchpad Y (up/down)", Settings.touchInvY[p], on -> Settings.touchInvY[p] = on);
+        addCheck(box, "Swap touchpad X and Y (before invert)", Settings.touchSwap[p], on -> Settings.touchSwap[p] = on);
+        addSpinner(box, "Layout", Settings.TOUCH_NAMES, Settings.touchMode[p], v -> { Settings.touchMode[p] = v; Settings.save(); pad.postInvalidate(); });
+
+        box.addView(header("Button remap \u2014 Player " + (p + 1)));
+        box.addView(text("Map any controller button to a Deck grip (L4/R4/L5/R5) or a trackpad touch/click. "
+                + "Useful for extra buttons like a Flydigi's C and Z.", 11f));
+        for (int i = 0; i < Settings.REMAP_COUNT; i++) {
+            final int target = i;
+            addSpinner(box, Settings.REMAP_TARGETS[i] + " pressed by", Settings.SRC_NAMES, Settings.remap[p][i], v -> { Settings.remap[p][target] = v; Settings.save(); });
+        }
+
+        box.addView(header("Light \u2014 Player " + (p + 1)));
+        addSlider(box, "Red", 255, Settings.lightR[p], v -> { Settings.lightR[p] = v; applyLight(p); });
+        addSlider(box, "Green", 255, Settings.lightG[p], v -> { Settings.lightG[p] = v; applyLight(p); });
+        addSlider(box, "Blue", 255, Settings.lightB[p], v -> { Settings.lightB[p] = v; applyLight(p); });
+        addSlider(box, "Brightness %", 100, Settings.brightness[p], v -> { Settings.brightness[p] = v; applyLight(p); });
+        addSpinner(box, "Player LEDs", Settings.PLAYER_NAMES, Settings.playerLed[p], v -> { Settings.playerLed[p] = v; Settings.save(); applyLight(p); });
+    }
+
+    private void applyLight(int p) { NativeBridge.applyOutput(p); }
 
     // ---------- small UI helpers ----------
 
@@ -287,10 +302,6 @@ public class BridgeActivity extends SDLActivity implements NativeBridge.Listener
         c.setChecked(value);
         c.setOnCheckedChangeListener((v, on) -> { sink.set(on); Settings.save(); });
         root.addView(c);
-    }
-
-    private void lightChanged() {
-        NativeBridge.applyOutput();
     }
 
     // ---------- USB diagnostics ----------
@@ -367,8 +378,8 @@ public class BridgeActivity extends SDLActivity implements NativeBridge.Listener
     // ---------- tests ----------
 
     private void rumbleTest() {
-        NativeBridge.setRumble(220, 220);
-        ui.postDelayed(() -> NativeBridge.setRumble(0, 0), 700);
+        NativeBridge.setRumble(uiPlayer, 220, 220);
+        ui.postDelayed(() -> NativeBridge.setRumble(uiPlayer, 0, 0), 700);
     }
 
     // ---------- updates ----------
@@ -471,13 +482,14 @@ public class BridgeActivity extends SDLActivity implements NativeBridge.Listener
 
     // ---------- NativeBridge.Listener ----------
 
-    private String calibLabel() {
-        float[] b = Settings.gyroBias;
+    private String calibLabel(int p) {
+        float[] b = Settings.gyroBias[p];
         if (b[0] == 0f && b[1] == 0f && b[2] == 0f) return "Calibration: none";
-        return String.format("Calibration bias (deg/s): x=%.2f y=%.2f z=%.2f", b[0], b[1], b[2]);
+        return String.format(java.util.Locale.ROOT, "Calibration bias (deg/s): x=%.2f y=%.2f z=%.2f", b[0], b[1], b[2]);
     }
 
     private void startGyroCalibration() {
+        calibPlayer = uiPlayer;
         calibSum[0] = calibSum[1] = calibSum[2] = 0f;
         calibCount = 0;
         if (gyroCalibView != null) gyroCalibView.setText("Hold the controller still...");
@@ -485,9 +497,10 @@ public class BridgeActivity extends SDLActivity implements NativeBridge.Listener
 
     private void resetGyroCalibration() {
         calibCount = -1;
-        Settings.gyroBias[0] = Settings.gyroBias[1] = Settings.gyroBias[2] = 0f;
+        float[] b = Settings.gyroBias[uiPlayer];
+        b[0] = b[1] = b[2] = 0f;
         Settings.save();
-        if (gyroCalibView != null) gyroCalibView.setText(calibLabel());
+        if (gyroCalibView != null) gyroCalibView.setText(calibLabel(uiPlayer));
     }
 
     @Override public void onFrame(float[] f, int slot) {
@@ -495,12 +508,13 @@ public class BridgeActivity extends SDLActivity implements NativeBridge.Listener
         if (calibCount >= 0 && f.length >= 13) {
             calibSum[0] += f[7]; calibSum[1] += f[8]; calibSum[2] += f[9];
             if (++calibCount >= CALIB_SAMPLES) {
-                Settings.gyroBias[0] = calibSum[0] / CALIB_SAMPLES * RAD_TO_DEG;
-                Settings.gyroBias[1] = calibSum[1] / CALIB_SAMPLES * RAD_TO_DEG;
-                Settings.gyroBias[2] = calibSum[2] / CALIB_SAMPLES * RAD_TO_DEG;
+                float[] b = Settings.gyroBias[calibPlayer];
+                b[0] = calibSum[0] / CALIB_SAMPLES * RAD_TO_DEG;
+                b[1] = calibSum[1] / CALIB_SAMPLES * RAD_TO_DEG;
+                b[2] = calibSum[2] / CALIB_SAMPLES * RAD_TO_DEG;
                 Settings.save();
                 calibCount = -1;
-                ui.post(() -> { if (gyroCalibView != null) gyroCalibView.setText(calibLabel()); });
+                ui.post(() -> { if (gyroCalibView != null && uiPlayer == calibPlayer) gyroCalibView.setText(calibLabel(calibPlayer)); });
             }
         }
         pad.update(f);

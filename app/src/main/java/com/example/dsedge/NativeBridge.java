@@ -14,9 +14,9 @@ public final class NativeBridge {
     }
 
     /** Layout of the float[] frame sent from native code. */
-    public static final int FRAME_LEN = 21;
+    public static final int FRAME_LEN = 22;
     // 0 mask | 1..4 lx ly rx ry (0..255) | 5,6 l2 r2 (0..255) | 7..9 gyro rad/s | 10..12 accel m/s^2
-    // 13..15 finger0 (down,x,y) | 16..18 finger1 | 19 battery % (-1 unknown) | 20 SDL power state
+    // 13..15 finger0 (down,x,y) | 16..18 finger1 | 19 battery % (-1 unknown) | 20 SDL power state | 21 extra-button mask (MISC2..6)
 
     static final CopyOnWriteArrayList<Listener> listeners = new CopyOnWriteArrayList<>();
     static volatile String lastStatus = "Starting...";
@@ -26,13 +26,10 @@ public final class NativeBridge {
     static final int[] vids = new int[MAX_PADS], pids = new int[MAX_PADS];
     static final String[] names = new String[MAX_PADS];
 
-    private static volatile int rumbleStrong, rumbleWeak;
-
     private NativeBridge() {}
 
     /** Called from the native SDL thread. */
     static void onFrame(float[] f, int slot) {
-        if (slot == 0 && f.length >= FRAME_LEN) f[0] = Settings.mapMask((int) f[0]);
         for (Listener l : listeners) l.onFrame(f, slot);
     }
 
@@ -77,27 +74,33 @@ public final class NativeBridge {
 
     /** Rumble for any player slot (0..3). */
     static void setRumble(int slot, int strong, int weak) {
-        if (slot <= 0) { setRumble(strong, weak); return; }
+        if (slot < 0 || slot >= MAX_PADS) return;
         try { nativeSetRumble(slot, strong, weak); } catch (UnsatisfiedLinkError e) { }
     }
 
     static native void nativeSetRumble(int slot, int rumbleStrong, int rumbleWeak);
 
-    static void setRumble(int strong, int weak) {
-        rumbleStrong = strong;
-        rumbleWeak = weak;
-        applyOutput();
-    }
-
-    /** Pushes rumble, lightbar (scaled by brightness) and player LED to the controller. */
+    /** Pushes each player's lightbar (scaled by brightness) and player LED to its controller. */
     static void applyOutput() {
         try {
-            int b = Settings.brightness;
-            nativeSetOutput(rumbleStrong, rumbleWeak, Settings.lightR * b / 100, Settings.lightG * b / 100, Settings.lightB * b / 100);
-            nativeSetPlayer(Settings.player - 1); // -1 = player LEDs off
+            for (int p = 0; p < MAX_PADS; p++) {
+                int b = Settings.brightness[p];
+                nativeSetLed(p, Settings.lightR[p] * b / 100, Settings.lightG[p] * b / 100, Settings.lightB[p] * b / 100);
+                nativeSetPlayerLed(p, Settings.playerLed[p] - 1); // -1 = player LEDs off
+            }
         } catch (UnsatisfiedLinkError e) {
             // The bridge screen has not been opened yet, so the native library is not loaded.
         }
+    }
+
+    /** Apply just one player's light (on a settings change). */
+    static void applyOutput(int p) {
+        if (p < 0 || p >= MAX_PADS) return;
+        try {
+            int b = Settings.brightness[p];
+            nativeSetLed(p, Settings.lightR[p] * b / 100, Settings.lightG[p] * b / 100, Settings.lightB[p] * b / 100);
+            nativeSetPlayerLed(p, Settings.playerLed[p] - 1);
+        } catch (UnsatisfiedLinkError e) { }
     }
 
     /** Forced mode: ignore Android's basic input and only use SDL's own USB driver. */
@@ -130,9 +133,9 @@ public final class NativeBridge {
 
     static native void nativeSetPollMs(int ms);
 
-    /** rumble strong/weak 0..255, lightbar rgb 0..255. */
-    static native void nativeSetOutput(int rumbleStrong, int rumbleWeak, int r, int g, int b);
+    /** Per-slot lightbar rgb 0..255. */
+    static native void nativeSetLed(int slot, int r, int g, int b);
 
-    /** -1 = player LEDs off, 0..3 = player 1..4. */
-    static native void nativeSetPlayer(int index);
+    /** Per-slot player LEDs: -1 = off, 0..3 = player 1..4. */
+    static native void nativeSetPlayerLed(int slot, int index);
 }

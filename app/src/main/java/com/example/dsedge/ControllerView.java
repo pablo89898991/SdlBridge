@@ -287,12 +287,12 @@ public class ControllerView extends View {
         }
         // single touchpad
         padRect(c, 36, 12, 64, 34, null, B_TOUCH);
-        if (Settings.touchMode == Settings.TOUCH_SPLIT) {
+        if (Settings.touchMode[0] == Settings.TOUCH_SPLIT) {
             stroke.setColor(LINE);
             c.drawLine(50, 12, 50, 34, stroke);
             label(c, "L pad", 43, 32.5f, 2f);
             label(c, "R pad", 57, 32.5f, 2f);
-        } else if (Settings.touchMode == Settings.TOUCH_OFF) {
+        } else if (Settings.touchMode[0] == Settings.TOUCH_OFF) {
             label(c, "touchpad off", 50, 32.5f, 2f);
         } else {
             label(c, "whole pad", 50, 32.5f, 2f);
@@ -314,8 +314,8 @@ public class ControllerView extends View {
         float[] f = frame;
         if (f[13 + 3 * fingerSlot] <= 0.5f) return;
         float nx = f[14 + 3 * fingerSlot] / 1919f, ny = f[15 + 3 * fingerSlot] / 1079f;
-        if (Settings.touchInvX) nx = 1f - nx;
-        if (Settings.touchInvY) ny = 1f - ny;
+        if (Settings.touchInvX[0]) nx = 1f - nx;
+        if (Settings.touchInvY[0]) ny = 1f - ny;
         fill.setColor(color);
         c.drawCircle(l + nx * (r - l), t + ny * (b - t), 1.8f, fill);
     }

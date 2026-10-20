@@ -10,7 +10,7 @@
 #include <stdio.h>
 #include <string.h>
 
-#define FRAME_LEN 21
+#define FRAME_LEN 22
 #define MAX_PADS 4
 
 static JavaVM *g_vm;
@@ -21,9 +21,9 @@ static jmethodID g_frame, g_status, g_gone, g_info, g_caps;
 static _Atomic int g_rl[MAX_PADS], g_rr[MAX_PADS];
 static _Atomic int g_rumble_dirty[MAX_PADS];
 static _Atomic int g_led_dirty[MAX_PADS];
-static _Atomic int g_r, g_g, g_b = 255;       /* lightbar colour of slot 0 (the user's setting) */
-static _Atomic int g_player = -1;              /* slot 0 player LEDs: -1 = off, 0..3 = player 1..4 */
-static _Atomic int g_player_dirty = 1;
+static _Atomic int g_led_r[MAX_PADS], g_led_g[MAX_PADS], g_led_b[MAX_PADS];  /* per-slot lightbar colour */
+static _Atomic int g_player_idx[MAX_PADS];     /* per-slot player LEDs: -1 = off, 0..3 = player 1..4 */
+static _Atomic int g_player_dirty[MAX_PADS];
 
 JNIEXPORT jint JNI_OnLoad(JavaVM *vm, void *reserved)
 {
@@ -43,14 +43,13 @@ JNIEXPORT jint JNI_OnLoad(JavaVM *vm, void *reserved)
 }
 
 /* Slot 0: rumble + lightbar colour (the user's light settings). */
-JNIEXPORT void JNICALL Java_com_example_dsedge_NativeBridge_nativeSetOutput(
-    JNIEnv *env, jclass cls, jint rl, jint rr, jint r, jint g, jint b)
+JNIEXPORT void JNICALL Java_com_example_dsedge_NativeBridge_nativeSetLed(
+    JNIEnv *env, jclass cls, jint slot, jint r, jint g, jint b)
 {
     (void)env; (void)cls;
-    atomic_store(&g_rl[0], rl); atomic_store(&g_rr[0], rr);
-    atomic_store(&g_r, r); atomic_store(&g_g, g); atomic_store(&g_b, b);
-    atomic_store(&g_rumble_dirty[0], 1);
-    atomic_store(&g_led_dirty[0], 1);
+    if (slot < 0 || slot >= MAX_PADS) return;
+    atomic_store(&g_led_r[slot], r); atomic_store(&g_led_g[slot], g); atomic_store(&g_led_b[slot], b);
+    atomic_store(&g_led_dirty[slot], 1);
 }
 
 /* Rumble for any slot (0..3). */
@@ -63,11 +62,12 @@ JNIEXPORT void JNICALL Java_com_example_dsedge_NativeBridge_nativeSetRumble(
     atomic_store(&g_rumble_dirty[slot], 1);
 }
 
-JNIEXPORT void JNICALL Java_com_example_dsedge_NativeBridge_nativeSetPlayer(JNIEnv *env, jclass cls, jint index)
+JNIEXPORT void JNICALL Java_com_example_dsedge_NativeBridge_nativeSetPlayerLed(JNIEnv *env, jclass cls, jint slot, jint index)
 {
     (void)env; (void)cls;
-    atomic_store(&g_player, index);
-    atomic_store(&g_player_dirty, 1);
+    if (slot < 0 || slot >= MAX_PADS) return;
+    atomic_store(&g_player_idx[slot], index);
+    atomic_store(&g_player_dirty[slot], 1);
 }
 
 static atomic_int g_force = 1;   /* 1 = only accept pads served by SDL's own USB (HIDAPI) driver */
@@ -149,6 +149,15 @@ static const struct { SDL_GamepadButton button; int bit; } BUTTONS[] = {
     { SDL_GAMEPAD_BUTTON_RIGHT_PADDLE2, 22 }, /* Edge right Fn */
 };
 
+/* Extra buttons that don't fit the 0..22 mask safely in a float -> a second mask in f[21]. */
+static const struct { SDL_GamepadButton button; int bit; } BUTTONS2[] = {
+    { SDL_GAMEPAD_BUTTON_MISC2, 0 },   /* e.g. Flydigi C */
+    { SDL_GAMEPAD_BUTTON_MISC3, 1 },   /* e.g. Flydigi Z */
+    { SDL_GAMEPAD_BUTTON_MISC4, 2 },
+    { SDL_GAMEPAD_BUTTON_MISC5, 3 },
+    { SDL_GAMEPAD_BUTTON_MISC6, 4 },
+};
+
 static float stick(Sint16 v) { return (float)(((int)v + 32768) >> 8); }                /* 0..255, 128 = centre */
 static float trigger(Sint16 v) { return (float)((int)v * 255 / 32767); }               /* 0..255 */
 
@@ -170,6 +179,11 @@ static void send_frame(JNIEnv *env, int slot, SDL_Gamepad *pad, jfloatArray arr)
     if (f[5] > 30.0f) mask |= 1 << 6;
     if (f[6] > 30.0f) mask |= 1 << 7;
     f[0] = (float)mask; /* < 2^24, exact in a float */
+    int mask2 = 0;
+    for (size_t i = 0; i < SDL_arraysize(BUTTONS2); i++) {
+        if (SDL_GetGamepadButton(pad, BUTTONS2[i].button)) mask2 |= 1 << BUTTONS2[i].bit;
+    }
+    f[21] = (float)mask2;
 
     float v[3];
     if (SDL_GetGamepadSensorData(pad, SDL_SENSOR_GYRO, v, 3)) { f[7] = v[0]; f[8] = v[1]; f[9] = v[2]; }
@@ -362,8 +376,7 @@ static void setup_slot(JNIEnv *env, int slot)
     enable_sensors(pad);
     atomic_store(&g_led_dirty[slot], 1);
     atomic_store(&g_rumble_dirty[slot], 1);
-    if (slot == 0) atomic_store(&g_player_dirty, 1);
-    else SDL_SetGamepadPlayerIndex(pad, slot);
+    atomic_store(&g_player_dirty[slot], 1);
     send_info(env, slot, SDL_GetGamepadVendor(pad), SDL_GetGamepadProduct(pad), SDL_GetGamepadName(pad));
     send_caps(env, slot, pad);
     g_last_diag[0] = 0;
@@ -443,9 +456,6 @@ int main(int argc, char *argv[])
     }
     send_status(env, "Waiting for a controller (plug it in via USB-C)");
 
-    /* LED colours for players 2..4 (player 1 uses the colour from the settings screen). */
-    static const Uint8 SLOT_COLORS[MAX_PADS][3] = { {0, 0, 255}, {255, 0, 0}, {0, 200, 0}, {255, 160, 0} };
-
     jfloatArray arr = (*env)->NewFloatArray(env, FRAME_LEN);
     Uint64 last_scan = 0, last_tick = 0, last_rumble[MAX_PADS] = {0};
 
@@ -496,11 +506,9 @@ int main(int argc, char *argv[])
             SDL_Gamepad *pad = g_pads[s];
             if (!pad) continue;
 
-            if (atomic_exchange(&g_led_dirty[s], 0)) {
-                if (s == 0) SDL_SetGamepadLED(pad, (Uint8)atomic_load(&g_r), (Uint8)atomic_load(&g_g), (Uint8)atomic_load(&g_b));
-                else SDL_SetGamepadLED(pad, SLOT_COLORS[s][0], SLOT_COLORS[s][1], SLOT_COLORS[s][2]);
-            }
-            if (s == 0 && atomic_exchange(&g_player_dirty, 0)) SDL_SetGamepadPlayerIndex(pad, atomic_load(&g_player));
+            if (atomic_exchange(&g_led_dirty[s], 0))
+                SDL_SetGamepadLED(pad, (Uint8)atomic_load(&g_led_r[s]), (Uint8)atomic_load(&g_led_g[s]), (Uint8)atomic_load(&g_led_b[s]));
+            if (atomic_exchange(&g_player_dirty[s], 0)) SDL_SetGamepadPlayerIndex(pad, atomic_load(&g_player_idx[s]));
 
             int rl = atomic_load(&g_rl[s]), rr = atomic_load(&g_rr[s]);
             int rdirty = atomic_exchange(&g_rumble_dirty[s], 0);

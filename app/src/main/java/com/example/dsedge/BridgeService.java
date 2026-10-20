@@ -302,10 +302,10 @@ public class BridgeService extends Service implements NativeBridge.Listener {
     // ---------- client -> controller ----------
 
     /** Applies the touchpad swap / invert settings to one trackpad's [down, x, y]. */
-    private static void orient(float[] p) {
-        if (Settings.touchSwap) { float t = p[1]; p[1] = p[2]; p[2] = t; }
-        if (Settings.touchInvX) p[1] = -p[1];
-        if (Settings.touchInvY) p[2] = -p[2];
+    private static void orient(float[] p, int player) {
+        if (Settings.touchSwap[player]) { float t = p[1]; p[1] = p[2]; p[2] = t; }
+        if (Settings.touchInvX[player]) p[1] = -p[1];
+        if (Settings.touchInvY[player]) p[2] = -p[2];
     }
 
     private void mergeOutput(Bundle b) {
@@ -315,10 +315,11 @@ public class BridgeService extends Service implements NativeBridge.Listener {
         }
         // A client that sets the lightbar overrides the saved colour until the bridge screen changes it again.
         if (b.containsKey("r") || b.containsKey("g") || b.containsKey("b")) {
-            if (b.containsKey("r")) Settings.lightR = clamp(b.getInt("r"));
-            if (b.containsKey("g")) Settings.lightG = clamp(b.getInt("g"));
-            if (b.containsKey("b")) Settings.lightB = clamp(b.getInt("b"));
-            NativeBridge.applyOutput();
+            int ps = Math.max(0, Math.min(Settings.PLAYERS - 1, b.getInt("slot", 0)));
+            if (b.containsKey("r")) Settings.lightR[ps] = clamp(b.getInt("r"));
+            if (b.containsKey("g")) Settings.lightG[ps] = clamp(b.getInt("g"));
+            if (b.containsKey("b")) Settings.lightB[ps] = clamp(b.getInt("b"));
+            NativeBridge.applyOutput(ps);
         }
     }
 
@@ -331,26 +332,31 @@ public class BridgeService extends Service implements NativeBridge.Listener {
         Bundle b = new Bundle();
         b.putByteArray("raw", new byte[0]);
         b.putLong("t", SystemClock.elapsedRealtimeNanos());
-        int mask = (int) f[0]; // already includes the L4/R4/L5/R5 remapping
+        int rawMask = (int) f[0];
+        int mask2 = f.length >= 22 ? (int) f[21] : 0;          // extra buttons (MISC2..6, e.g. Flydigi C/Z)
+        int mask = Settings.applyGripRemap(rawMask, mask2, slot);  // user button -> L4/R4/L5/R5
         b.putInt("mask", mask);
         b.putInt("lx", (int) f[1]); b.putInt("ly", (int) f[2]);
         b.putInt("rx", (int) f[3]); b.putInt("ry", (int) f[4]);
         b.putInt("l2", (int) f[5]); b.putInt("r2", (int) f[6]);
-        float gk = Settings.gyroGain / 100f;
-        int inv = Settings.gyroInvert;
-        float dz = Settings.gyroDeadzone;
+        float gk = Settings.gyroGain[slot] / 100f;
+        int inv = Settings.gyroInvert[slot];
+        float dz = Settings.gyroDeadzone[slot];
+        float[] bias = Settings.gyroBias[slot];
+        int[] gmap = Settings.gyroMap[slot];
+        boolean accFollows = Settings.accelFollows[slot];
         float[] gy = {f[7] * RAD_TO_DEG, f[8] * RAD_TO_DEG, f[9] * RAD_TO_DEG};   // deg/s
         float[] ac = {f[10] / G, f[11] / G, f[12] / G};                          // g
         for (int k = 0; k < 3; k++) {
-            gy[k] -= Settings.gyroBias[k];                 // remove resting drift (from Calibrate)
+            gy[k] -= bias[k];                              // remove resting drift (from Calibrate)
             if (Math.abs(gy[k]) < dz) gy[k] = 0f;          // deadzone, in real deg/s (before gain)
         }
         float[] go = new float[3], ao = new float[3];
         for (int i = 0; i < 3; i++) {
             float sign = (inv & (1 << i)) != 0 ? -1f : 1f;
-            int src = Settings.gyroMap[i];
+            int src = gmap[i];
             go[i] = gy[src] * gk * sign;
-            ao[i] = Settings.accelFollows ? ac[src] * sign : ac[i];
+            ao[i] = accFollows ? ac[src] * sign : ac[i];
         }
         b.putFloatArray("gyro", go);
         b.putFloatArray("accel", ao);
@@ -367,7 +373,7 @@ public class BridgeService extends Service implements NativeBridge.Listener {
 
         // ... and the decoupled version: each half is its own trackpad with local -1..1 coordinates.
         float[] padL = new float[3], padR = new float[3];
-        int mode = Settings.touchMode;
+        int mode = Settings.touchMode[slot];
         if (mode != Settings.TOUCH_OFF) {
             for (int i = 0; i < 2; i++) {
                 if (f[13 + 3 * i] <= 0.5f) continue;
@@ -386,15 +392,21 @@ public class BridgeService extends Service implements NativeBridge.Listener {
         if (((mask >> 13) & 1) != 0 && mode != Settings.TOUCH_OFF) {
             click = (mode == Settings.TOUCH_SPLIT && padL[0] > 0f && padR[0] == 0f) ? 0 : 1;
         }
-        orient(padL);
-        orient(padR);
+        // Button -> trackpad touch / click remaps (targets 4..7)
+        int[] rm = Settings.remap[slot];
+        if (Settings.srcDown(rawMask, mask2, rm[6]) && padL[0] == 0f) { padL[0] = 1f; padL[1] = 0f; padL[2] = 0f; }
+        if (Settings.srcDown(rawMask, mask2, rm[7]) && padR[0] == 0f) { padR[0] = 1f; padR[1] = 0f; padR[2] = 0f; }
+        if (Settings.srcDown(rawMask, mask2, rm[4])) { if (padL[0] == 0f) padL[0] = 1f; click = 0; }
+        if (Settings.srcDown(rawMask, mask2, rm[5])) { if (padR[0] == 0f) padR[0] = 1f; click = 1; }
+        orient(padL, slot);
+        orient(padR, slot);
         b.putFloatArray("padL", padL);
         b.putFloatArray("padR", padR);
         b.putInt("padClick", click);
 
         int state = (int) f[20];
         b.putInt("slot", slot);
-        b.putInt("sep", Settings.separateController ? 1 : 0);
+        b.putInt("ptype", Settings.PRESENT_PAD_TYPE[Settings.presentAs]);
         b.putInt("vid", NativeBridge.vids[slot]);
         b.putInt("pid", NativeBridge.pids[slot]);
         b.putInt("battery", Math.max(0, (int) f[19]));

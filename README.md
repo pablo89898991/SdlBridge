@@ -122,13 +122,14 @@ plugged in via USB-C) and a "Switch audio output" button that opens Android's me
 Android controls routing, so a normal app can't force game audio to a device directly; this is the
 supported way to switch between the controller and the phone.
 
-## Separate controller mode
+## Present controller as (native Sony controller)
 
-"Controller mode" -> "Present as a separate controller": instead of driving DroidDeck's Steam Deck pad,
-the controller claims its own DroidDeck slot and appears as a distinct controller in Steam, carrying full
-back buttons (L4/R4/L5/R5), both trackpads with clicks, and gyro. Restart the DroidDeck session after
-toggling. Needs the DroidDeck side (sdl3/DualSenseBridge.kt) from the current patcher. Note: it is a Steam
-virtual gamepad entry, not a native-DualSense hidraw device.
+"Controller mode" -> "Present controller as": Steam Deck (default) / DualSense / DualShock 4. The DualSense
+and DS4 options use DroidDeck's native hidraw emulation (FakeInputWriter.setPadType), so Steam sees a REAL
+Sony controller with gyro, touchpad and back buttons through Steam Input, instead of the Steam Deck pad.
+Give Steam a few seconds (or restart the session) after switching. (Note: this re-presents the primary
+controller as a DualSense; it is not a second simultaneous controller.)
+
 
 ## Performance (gyro / trackpad latency)
 
@@ -136,3 +137,17 @@ virtual gamepad entry, not a native-DualSense hidraw device.
   latency for more CPU/battery; no accuracy is lost either way.
 - The DroidDeck client handles bridge frames on a dedicated thread (not the UI thread), which removes jitter.
 - Stick throttle is 4 ms and trackpad change-detection is 11-bit for smoother motion.
+
+## Per-player settings (P1–P4 tabs)
+
+The "Player settings" section has four tabs (P1–P4). Gyro (speed, invert, axis remap, deadzone, calibration),
+touchpad (layout, invert, swap), back-button remap, and lightbar (RGB, brightness, player LED) are stored
+independently per player, applied by controller slot. Global settings (SDL3 driver, poll rate, bubble, USB
+audio, present-as) stay outside the tabs. Each controller's lightbar is now driven per-slot natively.
+
+## Button remap (any button -> grip or trackpad)
+
+Per player, each of 8 targets — L4, R4, L5, R5, and left/right trackpad click and touch — can be driven by
+ANY controller button, including extra buttons SDL exposes as MISC2..6 (e.g. a Flydigi Vader's C and Z).
+The bridge now carries those extra buttons in a second mask. Example: 4 back buttons as L4/R4/L5/R5, and
+C/Z as left/right trackpad click — giving Steam-Input parity across SDL3 controllers.
