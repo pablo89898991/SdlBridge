@@ -358,6 +358,13 @@ public class BridgeService extends Service implements NativeBridge.Listener {
             go[i] = gy[src] * gk * sign;
             ao[i] = accFollows ? ac[src] * sign : ac[i];
         }
+        // A native Sony pad's report remaps the IMU axes (X, Z, -Y) vs the Deck IMU, so for DualSense /
+        // DualShock 4 / Edge we pre-apply the inverse (Y, Z) -> (-Z, Y) here; Steam Deck mode is left as-is.
+        boolean sony = Settings.PRESENT_PAD_TYPE[Settings.presentAs] != 0;
+        if (sony) {
+            float tg = go[1]; go[1] = -go[2]; go[2] = tg;
+            float ta = ao[1]; ao[1] = -ao[2]; ao[2] = ta;
+        }
         b.putFloatArray("gyro", go);
         b.putFloatArray("accel", ao);
 
@@ -378,7 +385,6 @@ public class BridgeService extends Service implements NativeBridge.Listener {
         // surface, so ignore the Deck split there: keep SDL's finger slots (finger 0 is the primary
         // touch the game tracks) and map both across the whole pad. padL carries finger 0, padR finger 1.
         // Only the Steam Deck pad (type 0) keeps the left/right split, since it has two real trackpads.
-        boolean sony = Settings.PRESENT_PAD_TYPE[Settings.presentAs] != 0;
         if (mode != Settings.TOUCH_OFF) {
             if (sony) {
                 for (int i = 0; i < 2; i++) {
