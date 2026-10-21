@@ -358,9 +358,10 @@ public class BridgeService extends Service implements NativeBridge.Listener {
             go[i] = gy[src] * gk * sign;
             ao[i] = accFollows ? ac[src] * sign : ac[i];
         }
-        // A native Sony pad's report remaps the IMU axes (X, Z, -Y) vs the Deck IMU, so for DualSense /
-        // DualShock 4 / Edge we pre-apply the inverse (Y, Z) -> (-Z, Y) here; Steam Deck mode is left as-is.
-        boolean sony = Settings.PRESENT_PAD_TYPE[Settings.presentAs] != 0;
+        // Sony family only (DualShock 4 = 3, DualSense = 4, DualSense Edge = 5): their report has ONE
+        // full-width multitouch pad and remaps the IMU axes (X, Z, -Y) vs the Deck IMU. The Steam Deck (0)
+        // and Steam Controller (1) have two trackpads and use the Deck IMU convention, so they are left as-is.
+        boolean sony = Settings.PRESENT_PAD_TYPE[Settings.presentAs] >= 3;
         if (sony) {
             float tg = go[1]; go[1] = -go[2]; go[2] = tg;
             float ta = ao[1]; ao[1] = -ao[2]; ao[2] = ta;
