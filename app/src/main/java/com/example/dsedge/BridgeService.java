@@ -69,7 +69,8 @@ public class BridgeService extends Service implements NativeBridge.Listener {
             switch (m.what) {
                 case MSG_REGISTER:
                     if (m.replyTo != null) {
-                        clients.add(m.replyTo); clientCount = clients.size(); sendStatus(m.replyTo, NativeBridge.lastStatus);
+                        if (!clients.contains(m.replyTo)) clients.add(m.replyTo);   // re-register = resend state, no duplicate
+                        clientCount = clients.size(); sendStatus(m.replyTo, NativeBridge.lastStatus);
                         if (NativeBridge.tritonConnected) sendTritonConn(m.replyTo, true, NativeBridge.tritonWhat);
                         for (Bundle id : NativeBridge.hookupIdentity) if (id != null) sendOne(m.replyTo, MSG_HOOKUP_ADD, id);
                     }
