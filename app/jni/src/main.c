@@ -124,6 +124,8 @@ static void send_info(JNIEnv *env, int slot, int vid, int pid, const char *name)
     (*env)->DeleteLocalRef(env, s);
 }
 
+#include "triton.h"
+
 /* SDL button -> bit in the frame mask. Bit layout is shared with the first bridge and DroidDeck's client. */
 static const struct { SDL_GamepadButton button; int bit; } BUTTONS[] = {
     { SDL_GAMEPAD_BUTTON_SOUTH, 0 },          /* Cross */
@@ -267,6 +269,8 @@ static char g_last_diag[512];
 /* In forced mode an Android-path gamepad (no SDL USB path) is never used. */
 static bool usable_id(SDL_JoystickID id)
 {
+    /* A Steam Controller (2026) is never a bridge player: it is passed through raw (see triton.h). */
+    if (SDL_GetGamepadVendorForID(id) == VALVE_VID && triton_pid(SDL_GetGamepadProductForID(id))) return false;
     return !atomic_load(&g_force) || SDL_GetGamepadPathForID(id) != NULL;
 }
 
@@ -314,9 +318,13 @@ static void refresh_status(JNIEnv *env)
         snprintf(diag, sizeof(diag), "SDL3 driver OFF \u2014 controller released to Android (tap the bubble to turn it back on)");
     } else if (g_pads[0]) {
         describe(g_pads[0], diag, sizeof(diag));
-        char tail[40];
-        snprintf(tail, sizeof(tail), " | players:%d", pad_count());
+        char tail[80];
+        snprintf(tail, sizeof(tail), " | players:%d%s", pad_count(),
+                 triton_active() ? " | + Steam Controller (2026) raw passthrough" : "");
         SDL_strlcat(diag, tail, sizeof(diag));
+    } else if (triton_active()) {
+        snprintf(diag, sizeof(diag), "Connected: %s | raw passthrough to DroidDeck (all sensors, capacitive "
+                 "touch, grip sense, trackpad pressure and haptics handled by Steam)", tri_kind(&g_tri[g_tri_active]));
     } else {
         int cnt = 0, ignored = 0;
         SDL_JoystickID *ids = SDL_GetGamepads(&cnt);
@@ -444,6 +452,8 @@ int main(int argc, char *argv[])
     SDL_SetHint(SDL_HINT_JOYSTICK_HIDAPI_PS5, "1");
     SDL_SetHint(SDL_HINT_JOYSTICK_HIDAPI_PS4, "1");
     SDL_SetHint(SDL_HINT_JOYSTICK_HIDAPI_PS5_PLAYER_LED, "1");
+    /* Valve controllers are not read as gamepads: the Steam Controller (2026) is opened raw (triton.h). */
+    SDL_SetHint(SDL_HINT_JOYSTICK_HIDAPI_STEAM, "0");
 
     JNIEnv *env = (JNIEnv *)SDL_GetAndroidJNIEnv();
     if (!env || !g_cls) return 1;
@@ -482,6 +492,7 @@ int main(int argc, char *argv[])
                 if (g_pads[s]) { SDL_CloseGamepad(g_pads[s]); g_pads[s] = NULL; send_gone(env, s); }
                 rumble_on[s] = 0;
             }
+            tri_close_all(env, "rescan");
             SDL_QuitSubSystem(SDL_INIT_GAMEPAD);
             SDL_InitSubSystem(SDL_INIT_GAMEPAD);
             g_last_diag[0] = 0;
@@ -499,6 +510,8 @@ int main(int argc, char *argv[])
             for (int s = 0; s < MAX_PADS; s++) if (g_pads[s]) enable_sensors(g_pads[s]);
             refresh_status(env);
         }
+
+        triton_poll(env, now, atomic_load(&g_driver_off) != 0);
 
         if (pad_count() > 0) SDL_UpdateGamepads();
 

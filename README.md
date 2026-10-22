@@ -130,6 +130,20 @@ Sony controller with gyro, touchpad and back buttons through Steam Input, instea
 Give Steam a few seconds (or restart the session) after switching. (Note: this re-presents the primary
 controller as a DualSense; it is not a second simultaneous controller.)
 
+Also available: DualSense Edge, Steam Controller 2026 (28de:1302) and Steam Controller 2015 (28de:1102).
+For the 2015 model the touchpad is always split into its two trackpads, the D-pad clicks the left trackpad's
+edges, the right stick is unused (the real controller has none) and back buttons / Fn map to the two grips.
+
+## Steam Controller (2026) over USB cable or wireless puck
+
+Plug a Steam Controller (2026) in with a cable (28de:1302), or plug in its wireless puck (28de:1304/1305), and
+allow USB access. The bridge does not decode it: every HID report goes to DroidDeck unchanged and everything
+Steam sends back (haptics, settings, feature reads) goes to the controller, so Steam drives it natively --
+capacitive stick touch, grip sense, trackpad pressure, gyro and haptics -- without Bluetooth latency. In
+DroidDeck it appears as DroidDeck's own Steam Controller (the same node its Bluetooth support uses), next to
+the regular pad; it is never a bridge player and the "Present controller as" setting does not apply to it.
+One Steam Controller is passed through at a time.
+
 
 ## Performance (gyro / trackpad latency)
 

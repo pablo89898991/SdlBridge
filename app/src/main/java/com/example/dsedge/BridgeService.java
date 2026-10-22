@@ -40,6 +40,14 @@ public class BridgeService extends Service implements NativeBridge.Listener {
     static final int MSG_FRAME = 10;
     static final int MSG_STATUS = 11;
     static final int MSG_PAD_GONE = 12;
+    // Steam Controller (2026) raw passthrough. Client -> bridge:
+    static final int MSG_TRITON_OUTPUT = 4;    // "data": report (id first), "feature": feature write?
+    static final int MSG_TRITON_GET = 5;       // "request": long, "id": feature report id
+    static final int MSG_TRITON_RUMBLE = 6;    // "l", "r": 0..65535
+    // Bridge -> client:
+    static final int MSG_TRITON_STATE = 13;    // "id": report id, "data": payload
+    static final int MSG_TRITON_CONN = 14;     // "on": boolean, "what": description
+    static final int MSG_TRITON_FEATURE = 15;  // "request": long, "data": reply (absent = no answer)
 
     private static final float RAD_TO_DEG = 57.29578f;
     private static final float G = 9.80665f;
@@ -52,13 +60,27 @@ public class BridgeService extends Service implements NativeBridge.Listener {
         @Override public void handleMessage(Message m) {
             switch (m.what) {
                 case MSG_REGISTER:
-                    if (m.replyTo != null) { clients.add(m.replyTo); clientCount = clients.size(); sendStatus(m.replyTo, NativeBridge.lastStatus); }
+                    if (m.replyTo != null) {
+                        clients.add(m.replyTo); clientCount = clients.size(); sendStatus(m.replyTo, NativeBridge.lastStatus);
+                        if (NativeBridge.tritonConnected) sendTritonConn(m.replyTo, true, NativeBridge.tritonWhat);
+                    }
                     break;
                 case MSG_UNREGISTER:
                     if (m.replyTo != null) { clients.remove(m.replyTo); clientCount = clients.size(); }
                     break;
                 case MSG_OUTPUT:
                     mergeOutput(m.getData());
+                    break;
+                case MSG_TRITON_OUTPUT: {
+                    byte[] data = m.getData().getByteArray("data");
+                    if (data != null) NativeBridge.tritonOutput(data, m.getData().getBoolean("feature"));
+                    break;
+                }
+                case MSG_TRITON_GET:
+                    NativeBridge.tritonGetFeature(m.getData().getLong("request"), m.getData().getInt("id", 1));
+                    break;
+                case MSG_TRITON_RUMBLE:
+                    NativeBridge.tritonRumble(m.getData().getInt("l"), m.getData().getInt("r"));
                     break;
             }
         }
@@ -450,6 +472,47 @@ public class BridgeService extends Service implements NativeBridge.Listener {
                 m.setData(b);
                 c.send(m);
             } catch (RemoteException e) { clients.remove(c); }
+        }
+    }
+
+    // ---------- Steam Controller (2026) raw passthrough -> clients ----------
+    @Override public void onTritonState(int reportId, byte[] payload) {
+        if (clients.isEmpty() || payload == null) return;
+        Bundle b = new Bundle();
+        b.putInt("id", reportId);
+        b.putByteArray("data", payload);
+        sendAll(MSG_TRITON_STATE, b);
+    }
+
+    @Override public void onTritonConnected(boolean on, String what) {
+        for (Messenger c : clients) sendTritonConn(c, on, what);
+    }
+
+    @Override public void onTritonFeature(long request, byte[] report) {
+        Bundle b = new Bundle();
+        b.putLong("request", request);
+        if (report != null) b.putByteArray("data", report);
+        sendAll(MSG_TRITON_FEATURE, b);
+    }
+
+    private void sendTritonConn(Messenger c, boolean on, String what) {
+        try {
+            Bundle b = new Bundle();
+            b.putBoolean("on", on);
+            b.putString("what", what);
+            Message m = Message.obtain(null, MSG_TRITON_CONN);
+            m.setData(b);
+            c.send(m);
+        } catch (RemoteException e) { clients.remove(c); clientCount = clients.size(); }
+    }
+
+    private void sendAll(int what, Bundle b) {
+        for (Messenger c : clients) {
+            try {
+                Message m = Message.obtain(null, what);
+                m.setData(b);
+                c.send(m);
+            } catch (RemoteException e) { clients.remove(c); clientCount = clients.size(); }
         }
     }
 

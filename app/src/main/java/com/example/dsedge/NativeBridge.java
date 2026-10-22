@@ -11,6 +11,12 @@ public final class NativeBridge {
         default void onPadGone(int slot) { }
         /** Capabilities of the controller in this slot: which buttons/axes exist, touchpad count, and kind. */
         default void onPadCaps(int slot, int present, int axes, int touchpads, String kind) { }
+        /** Steam Controller (2026) raw passthrough: one input report (id + payload without the id byte). */
+        default void onTritonState(int reportId, byte[] payload) { }
+        /** The passed-through Steam Controller (2026) appeared / went away. */
+        default void onTritonConnected(boolean connected, String what) { }
+        /** Answer to a feature read DroidDeck forwarded (null = the controller did not answer). */
+        default void onTritonFeature(long request, byte[] report) { }
     }
 
     /** Layout of the float[] frame sent from native code. */
@@ -65,6 +71,45 @@ public final class NativeBridge {
         names[slot] = null;
         for (Listener l : listeners) l.onPadGone(slot);
     }
+
+    // ---------- Steam Controller (2026) raw passthrough (native/triton.h) ----------
+    static volatile boolean tritonConnected;
+    static volatile String tritonWhat = "";
+
+    /** Called from the native SDL thread for every state report. */
+    static void onTritonState(int reportId, byte[] payload) {
+        for (Listener l : listeners) l.onTritonState(reportId, payload);
+    }
+
+    /** Called from the native SDL thread. */
+    static void onTritonConnected(boolean connected, String what) {
+        tritonConnected = connected;
+        tritonWhat = what == null ? "" : what;
+        for (Listener l : listeners) l.onTritonConnected(connected, tritonWhat);
+    }
+
+    /** Called from the native SDL thread. */
+    static void onTritonFeature(long request, byte[] report) {
+        for (Listener l : listeners) l.onTritonFeature(request, report);
+    }
+
+    /** An output report (feature = false) or a feature-report write (feature = true) from Steam, report id first. */
+    static void tritonOutput(byte[] report, boolean feature) {
+        try { nativeTritonOutput(report, feature); } catch (UnsatisfiedLinkError e) { }
+    }
+
+    static void tritonGetFeature(long request, int reportId) {
+        try { nativeTritonGetFeature(request, reportId); } catch (UnsatisfiedLinkError e) { }
+    }
+
+    /** Game rumble for the passed-through controller, 0..65535 per motor. */
+    static void tritonRumble(int left, int right) {
+        try { nativeTritonRumble(left, right); } catch (UnsatisfiedLinkError e) { }
+    }
+
+    static native void nativeTritonOutput(byte[] report, boolean feature);
+    static native void nativeTritonGetFeature(long request, int reportId);
+    static native void nativeTritonRumble(int left, int right);
 
     /** Called from the native SDL thread. */
     static void onStatus(String s) {
