@@ -183,8 +183,10 @@ public class BridgeActivity extends SDLActivity implements NativeBridge.Listener
         cardTitle(mode, "Controller mode");
         addSpinner(mode, "Present controller as", Settings.PRESENT_NAMES, Settings.presentAs, v -> {
             Settings.presentAs = v;
+            if (!Settings.isHookup()) Settings.lastPresentAs = v;
             Settings.save();
             NativeBridge.applyHookup();
+            BridgeService.refreshBubble();
         });
         mode.addView(sub("Steam Deck: the controller is DroidDeck's Deck pad (default, full features). "
                 + "DualSense / DualShock 4: Steam sees a NATIVE Sony controller (hidraw) with gyro, touchpad and back buttons. "

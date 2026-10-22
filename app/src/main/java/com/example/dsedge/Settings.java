@@ -77,6 +77,8 @@ final class Settings {
     static final int[] PRESENT_PAD_TYPE = { 0, 4, 5, 3, 1, 6, 0 };
     static final int PRESENT_HOOKUP = 6;
     static boolean isHookup() { return presentAs == PRESENT_HOOKUP; }
+    /** The "Present controller as" choice to go back to when hook-up is switched off from the bubble. */
+    static volatile int lastPresentAs = 0;
     static final int PAD_TYPE_STEAM_2015 = 6;
     static boolean isSonyPadType(int t) { return t >= 3 && t <= 5; }
     static volatile int pollMs = 2;
@@ -119,6 +121,8 @@ final class Settings {
         forceUsb = prefs.getBoolean("forceUsbV2", false);
         driverEnabled = prefs.getBoolean("driverEnabled", true);
         presentAs = clamp(prefs.getInt("presentAs", 0), 0, PRESENT_NAMES.length - 1);
+        lastPresentAs = clamp(prefs.getInt("lastPresentAs", 0), 0, PRESENT_NAMES.length - 1);
+        if (lastPresentAs == PRESENT_HOOKUP) lastPresentAs = 0;
         pollMs = clamp(prefs.getInt("pollMs", 2), 1, 16);
         bubble = prefs.getBoolean("bubble", false);
         bubbleX = prefs.getInt("bubbleX", 24);
@@ -144,6 +148,7 @@ final class Settings {
         e.putBoolean("forceUsbV2", forceUsb);
         e.putBoolean("driverEnabled", driverEnabled);
         e.putInt("presentAs", presentAs);
+        e.putInt("lastPresentAs", lastPresentAs);
         e.putInt("pollMs", pollMs);
         e.putBoolean("bubble", bubble).putInt("bubbleX", bubbleX).putInt("bubbleY", bubbleY);
         e.apply();

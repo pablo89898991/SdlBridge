@@ -111,6 +111,8 @@ capability report from the native layer, so new SDL3-supported controllers work 
 "Floating bubble" -> "Show floating bubble over other apps": a draggable chat-head over any app.
 - **Tap**: turns the SDL3 driver on (forced USB) or off (releases the controller to Android). Green = on, red = off.
 - **Hold 3s**: opens the bridge app.
+- **Double tap**: Steam Native Hook-up on/off. The bubble turns **blue** ("HOOK") while it is on; double tap
+  again to go back to your previous "Present controller as" choice.
 - **Drag to the bottom**: a remove zone appears (like Messenger); drop the bubble on it to dismiss.
 - Position is remembered. Needs the "Draw over other apps" permission (grant it, then toggle on).
 

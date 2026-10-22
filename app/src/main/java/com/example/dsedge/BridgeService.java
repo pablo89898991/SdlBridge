@@ -116,8 +116,11 @@ public class BridgeService extends Service implements NativeBridge.Listener {
     private Runnable bubbleLongPress;
     private volatile boolean connectedState;
 
+    static volatile BridgeService instance;
+
     @Override public void onCreate() {
         NativeBridge.appContext = getApplicationContext();
+        instance = this;
         super.onCreate();
         Settings.init(this);
         NativeBridge.listeners.add(this);
@@ -146,6 +149,7 @@ public class BridgeService extends Service implements NativeBridge.Listener {
     }
 
     @Override public void onDestroy() {
+        if (instance == this) instance = null;
         NativeBridge.listeners.remove(this);
         hideBubble();
         super.onDestroy();
@@ -153,6 +157,7 @@ public class BridgeService extends Service implements NativeBridge.Listener {
 
     // ---------- floating bubble (chat-head) ----------
     //   tap           -> toggle the SDL3 forced driver (green = on, red = off)
+    //   double tap    -> toggle Steam Native Hook-up (blue = on: Steam gets the real controllers)
     //   hold 3s       -> open the bridge app
     //   drag to the bottom remove zone -> dismiss the bubble
 
@@ -164,7 +169,7 @@ public class BridgeService extends Service implements NativeBridge.Listener {
 
         bubbleSize = dp(52);
         TextView b = new TextView(this);
-        b.setText("SDL3");
+        b.setText(Settings.isHookup() ? "HOOK" : "SDL3");
         b.setTextColor(Color.WHITE);
         b.setGravity(Gravity.CENTER);
         b.setTextSize(12f);
@@ -216,7 +221,7 @@ public class BridgeService extends Service implements NativeBridge.Listener {
                         hideRemoveZone();
                         if (!removed) {
                             Settings.bubbleX = bubbleLp.x; Settings.bubbleY = bubbleLp.y; Settings.save();
-                            if (!moved && !longPressFired) toggleDriver();
+                            if (!moved && !longPressFired) onBubbleTap();
                         }
                         return true;
                 }
@@ -238,6 +243,50 @@ public class BridgeService extends Service implements NativeBridge.Listener {
             startActivity(new Intent(BridgeService.this, BridgeActivity.class)
                     .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK));
         } catch (RuntimeException ignored) { }
+    }
+
+    // A single tap waits this long for a second tap before it acts, so a double tap doesn't also flip the driver.
+    private static final long DOUBLE_TAP_MS = 300;
+    private boolean tapPending;
+
+    private void onBubbleTap() {
+        if (tapPending) {
+            tapPending = false;   // the pending single tap sees this and does nothing
+            toggleHookup();
+        } else {
+            tapPending = true;
+            main.postDelayed(() -> { if (tapPending) { tapPending = false; toggleDriver(); } }, DOUBLE_TAP_MS);
+        }
+    }
+
+    /** Double-tap action: Steam Native Hook-up on/off (needs the SDL3 driver, so it is switched on too). */
+    private void toggleHookup() {
+        boolean on = !Settings.isHookup();
+        if (on) {
+            Settings.lastPresentAs = Settings.presentAs;
+            Settings.presentAs = Settings.PRESENT_HOOKUP;
+            if (!Settings.driverEnabled) {
+                Settings.driverEnabled = true;
+                try { BridgeActivity.setHidFrozen(false); } catch (Throwable ignored) { }
+            }
+        } else {
+            Settings.presentAs = Settings.lastPresentAs;
+        }
+        Settings.save();
+        NativeBridge.applyDriver();   // also applies hook-up
+        updateBubble();
+        try {
+            android.widget.Toast.makeText(this, on
+                ? "Steam Native Hook-up ON: Steam gets the real USB controllers"
+                : "Steam Native Hook-up OFF: back to " + Settings.PRESENT_NAMES[Settings.presentAs],
+                android.widget.Toast.LENGTH_SHORT).show();
+        } catch (RuntimeException ignored) { }
+    }
+
+    /** Recolor the bubble after a settings change made elsewhere (the app screen). */
+    static void refreshBubble() {
+        BridgeService s = instance;
+        if (s != null) s.updateBubble();
     }
 
     /** Tap action: flip the SDL3 forced driver and recolor the bubble. */
@@ -325,14 +374,19 @@ public class BridgeService extends Service implements NativeBridge.Listener {
     private GradientDrawable bubbleBg(boolean driverOn) {
         GradientDrawable g = new GradientDrawable();
         g.setShape(GradientDrawable.OVAL);
-        g.setColor(driverOn ? 0xFF2E7D32 : 0xFFC62828);   // green = SDL3 driver on, red = off
+        // blue = Steam Native Hook-up, green = SDL3 driver on, red = off
+        g.setColor(!driverOn ? 0xFFC62828 : Settings.isHookup() ? 0xFF1565C0 : 0xFF2E7D32);
         g.setStroke(dp(2), 0xCCFFFFFF);
         return g;
     }
 
     private void updateBubble() {
         if (bubble == null) return;
-        main.post(() -> { if (bubble != null) bubble.setBackground(bubbleBg(Settings.driverEnabled)); });
+        main.post(() -> {
+            if (bubble == null) return;
+            bubble.setBackground(bubbleBg(Settings.driverEnabled));
+            bubble.setText(Settings.isHookup() ? "HOOK" : "SDL3");
+        });
     }
 
     private int dp(int v) {
