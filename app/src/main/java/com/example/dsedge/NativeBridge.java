@@ -121,14 +121,52 @@ public final class NativeBridge {
     // ---------- Steam Native Hook-up (native/hookup.h) ----------
     static volatile android.content.Context appContext;
     static final android.os.Bundle[] hookupIdentity = new android.os.Bundle[MAX_PADS];
+    /** Controllers opened raw by native code: {path, vid, pid, interface}; kept until they are released. */
+    static final Object[][] hookupPending = new Object[MAX_PADS][];
+
+    /** A controller that is open but was never described (that failed): try again, off the SDL thread. */
+    static void retryUndescribed() {
+        for (int i = 0; i < MAX_PADS; i++) {
+            Object[] p = hookupPending[i];
+            if (p == null || hookupIdentity[i] != null) continue;
+            final int slot = i;
+            new Thread(() -> {
+                if (hookupPending[slot] == p && hookupIdentity[slot] == null)
+                    onHookupAdded(slot, (String) p[0], (Integer) p[1], (Integer) p[2], (Integer) p[3]);
+            }, "hookup-retry").start();
+        }
+    }
 
     static void onHookupAdded(int slot, String path, int vid, int pid, int ifaceIndex) {
         if (slot < 0 || slot >= MAX_PADS) return;
+        hookupPending[slot] = new Object[] { path, vid, pid, ifaceIndex };
         android.content.Context c = appContext;
-        android.os.Bundle id = c == null ? null : HookupIdentity.build(c, slot, path, vid, pid, ifaceIndex);
-        if (id == null) return;
+        if (c == null) {
+            onBridgeLog("hookup: slot " + slot + " cannot be described (the app is not fully started); it is retried");
+            return;
+        }
+        long t0 = android.os.SystemClock.uptimeMillis();
+        android.os.Bundle id;
+        try {
+            id = HookupIdentity.build(c, slot, path, vid, pid, ifaceIndex);
+        } catch (Throwable e) {
+            onBridgeLog("hookup: slot " + slot + " could not be described: " + e);
+            return;
+        }
         hookupIdentity[slot] = id;
-        for (Listener l : listeners) l.onHookupAdded(slot, id);
+        byte[] d = id.getByteArray("desc");
+        onBridgeLog(String.format(java.util.Locale.US, "hookup: slot %d described in %d ms (descriptor %d bytes, %s); sent to %d DroidDeck connection(s)",
+            slot, android.os.SystemClock.uptimeMillis() - t0, d == null ? 0 : d.length, HookupIdentity.lastSource, clientCount()));
+        for (Listener l : listeners) {
+            try { l.onHookupAdded(slot, id); } catch (RuntimeException e) { android.util.Log.w("SDL3Bridge", "hookup: listener failed: " + e); }
+        }
+    }
+
+    /** DroidDeck connections, for the log (set by BridgeService). */
+    static volatile java.util.function.IntSupplier clients;
+    private static int clientCount() {
+        java.util.function.IntSupplier s = clients;
+        return s == null ? -1 : s.getAsInt();
     }
 
     /** Recent bridge log lines (newest last), replayed to DroidDeck when it connects. */
@@ -156,6 +194,7 @@ public final class NativeBridge {
 
     static void onHookupRemoved(int slot) {
         if (slot < 0 || slot >= MAX_PADS) return;
+        hookupPending[slot] = null;
         hookupIdentity[slot] = null;
         for (Listener l : listeners) l.onHookupRemoved(slot);
     }

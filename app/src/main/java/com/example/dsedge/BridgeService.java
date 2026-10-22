@@ -120,6 +120,7 @@ public class BridgeService extends Service implements NativeBridge.Listener {
                             sendOne(m.replyTo, MSG_HOOKUP_ADD, id);
                             live[n++] = i;
                         }
+                        NativeBridge.retryUndescribed();
                         Bundle st = new Bundle();
                         st.putIntArray("slots", java.util.Arrays.copyOf(live, n));
                         sendOne(m.replyTo, MSG_HOOKUP_STATE, st);
@@ -153,6 +154,7 @@ public class BridgeService extends Service implements NativeBridge.Listener {
 
     @Override public void onCreate() {
         NativeBridge.appContext = getApplicationContext();
+        NativeBridge.clients = clients::size;
         instance = this;
         super.onCreate();
         Settings.init(this);

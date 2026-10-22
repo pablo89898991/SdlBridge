@@ -147,6 +147,7 @@ static void hk_close(JNIEnv *env, int i, const char *why)
     SDL_hid_close(g_hk[i].dev);
     memset(&g_hk[i], 0, sizeof(g_hk[i]));
     if (g_hk_removed) (*env)->CallStaticVoidMethod(env, g_cls, g_hk_removed, (jint)i);
+    if ((*env)->ExceptionCheck(env)) (*env)->ExceptionClear(env);
 }
 
 static bool hk_path_open(const char *path)
@@ -185,6 +186,11 @@ static bool hk_open(JNIEnv *env, const char *path, Uint16 vid, Uint16 pid, int i
         jstring p = (*env)->NewStringUTF(env, path);
         (*env)->CallStaticVoidMethod(env, g_cls, g_hk_added, (jint)slot, p, (jint)vid, (jint)pid, (jint)iface);
         (*env)->DeleteLocalRef(env, p);
+        if ((*env)->ExceptionCheck(env)) {
+            (*env)->ExceptionDescribe(env);
+            (*env)->ExceptionClear(env);
+            hk_log(env, "hookup: slot %d: describing the controller to DroidDeck failed (Java exception, see logcat)", slot);
+        }
     }
     return true;
 }
@@ -294,6 +300,7 @@ static void hookup_run_queue(JNIEnv *env)
                                                 : SDL_hid_get_feature_report(dev, buf, (size_t)want);
             jbyteArray arr = n > 0 ? hk_bytes(env, buf, n) : NULL;
             if (g_hk_reply) (*env)->CallStaticVoidMethod(env, g_cls, g_hk_reply, (jint)r.slot, r.request, arr);
+            if ((*env)->ExceptionCheck(env)) (*env)->ExceptionClear(env);
             if (arr) (*env)->DeleteLocalRef(env, arr);
         } else if (dev && r.type == HK_FEATURE_SET) {
             SDL_hid_send_feature_report(dev, r.data, (size_t)r.len);
@@ -339,6 +346,7 @@ static void hookup_poll(JNIEnv *env, Uint64 now, bool driver_off)
             if (n < 0) { hk_close(env, i, "unplugged"); break; }
             jbyteArray arr = hk_bytes(env, buf, n);
             if (arr && g_hk_input) (*env)->CallStaticVoidMethod(env, g_cls, g_hk_input, (jint)i, arr);
+            if ((*env)->ExceptionCheck(env)) (*env)->ExceptionClear(env);
             if (arr) (*env)->DeleteLocalRef(env, arr);
         }
     }

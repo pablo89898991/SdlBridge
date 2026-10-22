@@ -27,8 +27,20 @@ final class HookupIdentity {
 
     /** Report descriptors read before the raw open, by SDL hid path. */
     private static final java.util.Map<String, byte[]> prefetched = new java.util.concurrent.ConcurrentHashMap<>();
+    /** Report descriptors already read once, by "vid:pid:interface" -- reused when the same controller is handed
+     *  over again (hook-up off/on, replug), so the USB device is not asked again while a connection holds it. */
+    private static final java.util.Map<String, byte[]> known = new java.util.concurrent.ConcurrentHashMap<>();
+    /** How the last build() got its descriptor ("prefetched", "remembered", "read", "fallback"). */
+    static volatile String lastSource = "";
+
+    private static String key(String path) {
+        String[] p = path.split("/");
+        int n = p.length;
+        return n >= 3 ? p[n - 3] + ":" + p[n - 2] + ":" + p[n - 1] : path;
+    }
 
     static void prefetch(Context context, String path) {
+        if (known.containsKey(key(path))) return;   // nothing to read: it is remembered
         try {
             UsbManager um = (UsbManager) context.getSystemService(Context.USB_SERVICE);
             UsbDevice dev = um == null ? null : um.getDeviceList().get(deviceName(path));
@@ -36,8 +48,8 @@ final class HookupIdentity {
             if (dev == null || index < 0 || index >= dev.getInterfaceCount()) return;
             UsbInterface f = dev.getInterface(index);
             if (f.getInterfaceClass() != UsbConstants.USB_CLASS_HID) return;
-            byte[] d = readReportDescriptor(um, dev, f);
-            if (d != null) prefetched.put(path, d);
+            byte[] d = readWithTimeout(um, dev, f);
+            if (d != null) { prefetched.put(path, d); known.put(key(path), d); }
             Log.i(TAG, "hookup: report descriptor of " + path + ": " + (d == null ? "unreadable" : d.length + " bytes"));
         } catch (RuntimeException e) {
             Log.w(TAG, "hookup: descriptor prefetch failed: " + e);
@@ -87,15 +99,19 @@ final class HookupIdentity {
                 try { serial = nz(dev.getSerialNumber()); } catch (SecurityException ignored) { }
                 version = parseBcd(dev.getVersion());
                 descriptor = prefetched.remove(path);
-                if (descriptor == null && ifaceClass == UsbConstants.USB_CLASS_HID && ifaceIndex >= 0 && ifaceIndex < dev.getInterfaceCount())
-                    descriptor = readReportDescriptor(um, dev, dev.getInterface(ifaceIndex));
+                if (descriptor != null) lastSource = "prefetched";
+                if (descriptor == null && (descriptor = known.get(key(path))) != null) lastSource = "remembered";
+                if (descriptor == null && ifaceClass == UsbConstants.USB_CLASS_HID && ifaceIndex >= 0 && ifaceIndex < dev.getInterfaceCount()) {
+                    descriptor = readWithTimeout(um, dev, dev.getInterface(ifaceIndex));
+                    if (descriptor != null) { known.put(key(path), descriptor); lastSource = "read"; }
+                }
                 String joined = (manufacturer.isEmpty() || product.startsWith(manufacturer)) ? product : manufacturer + " " + product;
                 if (!joined.trim().isEmpty()) name = joined.trim();
             }
         } catch (RuntimeException e) {
             Log.w(TAG, "hookup: identity of " + path + " incomplete: " + e);
         }
-        if (descriptor == null || descriptor.length == 0) descriptor = VENDOR_GAMEPAD_DESCRIPTOR;
+        if (descriptor == null || descriptor.length == 0) { descriptor = VENDOR_GAMEPAD_DESCRIPTOR; lastSource = "fallback"; }
         b.putInt("version", version);
         b.putInt("iface", ifaceNumber);
         b.putInt("ifclass", ifaceClass);
@@ -123,6 +139,21 @@ final class HookupIdentity {
         } catch (RuntimeException e) {
             return 0x0100;
         }
+    }
+
+    /** [readReportDescriptor] on its own thread, given up after 1.5 s: a USB request that never comes back must
+     *  not freeze the SDL thread (that would stop every controller until the app is restarted). */
+    private static byte[] readWithTimeout(UsbManager um, UsbDevice dev, UsbInterface iface) {
+        final byte[][] out = new byte[1][];
+        Thread t = new Thread(() -> out[0] = readReportDescriptor(um, dev, iface), "hookup-descriptor");
+        t.setDaemon(true);
+        t.start();
+        try { t.join(1500); } catch (InterruptedException e) { Thread.currentThread().interrupt(); }
+        if (t.isAlive()) {
+            Log.w(TAG, "hookup: report descriptor read timed out");
+            return null;
+        }
+        return out[0];
     }
 
     /** GET_DESCRIPTOR(HID report) on the interface, over a second connection. */
