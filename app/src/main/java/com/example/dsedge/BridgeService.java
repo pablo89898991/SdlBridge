@@ -56,6 +56,9 @@ public class BridgeService extends Service implements NativeBridge.Listener {
     static final int MSG_HOOKUP_INPUT = 21;    // "slot", "data"
     static final int MSG_HOOKUP_REMOVE = 22;   // "slot"
     static final int MSG_HOOKUP_REPLY = 23;    // "slot", "request", "data" (absent = no answer)
+    static final int MSG_BRIDGE_LOG = 30;      // "text": one or more log lines (newline separated)
+    static final int MSG_HOOKUP_SYNC = 9;      // client watchdog: resend what is handed over (re-registers if needed)
+    static final int MSG_HOOKUP_STATE = 24;    // "slots": int[] of live hook-up slots
 
     private static final float RAD_TO_DEG = 57.29578f;
     private static final float G = 9.80665f;
@@ -72,6 +75,13 @@ public class BridgeService extends Service implements NativeBridge.Listener {
                         if (!clients.contains(m.replyTo)) clients.add(m.replyTo);   // re-register = resend state, no duplicate
                         clientCount = clients.size(); sendStatus(m.replyTo, NativeBridge.lastStatus);
                         if (NativeBridge.tritonConnected) sendTritonConn(m.replyTo, true, NativeBridge.tritonWhat);
+                        String backlog;
+                        synchronized (NativeBridge.bridgeLog) { backlog = String.join("\n", NativeBridge.bridgeLog); }
+                        if (!backlog.isEmpty()) {
+                            Bundle lb = new Bundle();
+                            lb.putString("text", "(earlier) " + backlog.replace("\n", "\n(earlier) "));
+                            sendOne(m.replyTo, MSG_BRIDGE_LOG, lb);
+                        }
                         for (Bundle id : NativeBridge.hookupIdentity) if (id != null) sendOne(m.replyTo, MSG_HOOKUP_ADD, id);
                     }
                     break;
@@ -94,6 +104,28 @@ public class BridgeService extends Service implements NativeBridge.Listener {
                     if (data != null) NativeBridge.hookupOutput(m.getData().getInt("slot"), m.getData().getInt("kind"), data);
                     break;
                 }
+                case MSG_HOOKUP_SYNC:
+                    if (m.replyTo != null) {
+                        // A client the bridge forgot (the bridge was restarted) is registered again.
+                        if (!clients.contains(m.replyTo)) {
+                            clients.add(m.replyTo); clientCount = clients.size();
+                            sendStatus(m.replyTo, NativeBridge.lastStatus);
+                        }
+                        if (NativeBridge.tritonConnected) sendTritonConn(m.replyTo, true, NativeBridge.tritonWhat);
+                        int[] live = new int[NativeBridge.MAX_PADS];
+                        int n = 0;
+                        for (int i = 0; i < NativeBridge.MAX_PADS; i++) {
+                            Bundle id = NativeBridge.hookupIdentity[i];
+                            if (id == null) continue;
+                            sendOne(m.replyTo, MSG_HOOKUP_ADD, id);
+                            live[n++] = i;
+                        }
+                        Bundle st = new Bundle();
+                        st.putIntArray("slots", java.util.Arrays.copyOf(live, n));
+                        sendOne(m.replyTo, MSG_HOOKUP_STATE, st);
+                    }
+                    ensureBridgeLoop();
+                    break;
                 case MSG_HOOKUP_GET:
                     NativeBridge.hookupGet(m.getData().getInt("slot"), m.getData().getLong("request"), m.getData().getInt("id"),
                         m.getData().getBoolean("input"), m.getData().getInt("length", 64));
@@ -579,6 +611,20 @@ public class BridgeService extends Service implements NativeBridge.Listener {
         } catch (RemoteException e) { clients.remove(c); clientCount = clients.size(); }
     }
 
+    /** The SDL3 loop runs in the bridge screen; if Android closed it, start it again in the background. */
+    private long lastLoopStart;
+    private void ensureBridgeLoop() {
+        if (BridgeActivity.running) return;
+        long now = SystemClock.elapsedRealtime();
+        if (now - lastLoopStart < 10_000) return;
+        lastLoopStart = now;
+        try {
+            startActivity(new Intent(this, BridgeActivity.class)
+                .putExtra(BridgeActivity.EXTRA_BACKGROUND, true)
+                .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_NO_ANIMATION));
+        } catch (RuntimeException ignored) { }
+    }
+
     // ---------- Steam Native Hook-up -> clients ----------
     @Override public void onHookupAdded(int slot, Bundle identity) { sendAll(MSG_HOOKUP_ADD, identity); }
 
@@ -588,6 +634,12 @@ public class BridgeService extends Service implements NativeBridge.Listener {
         b.putInt("slot", slot);
         b.putByteArray("data", report);
         sendAll(MSG_HOOKUP_INPUT, b);
+    }
+
+    @Override public void onBridgeLog(String line) {
+        Bundle b = new Bundle();
+        b.putString("text", line);
+        sendAll(MSG_BRIDGE_LOG, b);
     }
 
     @Override public void onHookupRemoved(int slot) {

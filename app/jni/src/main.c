@@ -7,6 +7,7 @@
 #include <SDL3/SDL_main.h>
 #include <jni.h>
 #include <stdatomic.h>
+#include <stdarg.h>
 #include <stdio.h>
 #include <string.h>
 

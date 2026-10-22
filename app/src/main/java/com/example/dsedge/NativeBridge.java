@@ -22,6 +22,8 @@ public final class NativeBridge {
         default void onHookupInput(int slot, byte[] report) { }
         default void onHookupRemoved(int slot) { }
         default void onHookupReply(int slot, long request, byte[] report) { }
+        /** A line from the bridge's hook-up / passthrough code, for DroidDeck's session log. */
+        default void onBridgeLog(String line) { }
     }
 
     /** Layout of the float[] frame sent from native code. */
@@ -127,6 +129,19 @@ public final class NativeBridge {
         if (id == null) return;
         hookupIdentity[slot] = id;
         for (Listener l : listeners) l.onHookupAdded(slot, id);
+    }
+
+    /** Recent bridge log lines (newest last), replayed to DroidDeck when it connects. */
+    static final java.util.ArrayDeque<String> bridgeLog = new java.util.ArrayDeque<>();
+
+    /** Called from the native SDL thread. */
+    static void onBridgeLog(String line) {
+        String stamped = new java.text.SimpleDateFormat("HH:mm:ss.SSS", java.util.Locale.US).format(new java.util.Date()) + " " + line;
+        synchronized (bridgeLog) {
+            bridgeLog.addLast(stamped);
+            while (bridgeLog.size() > 60) bridgeLog.removeFirst();
+        }
+        for (Listener l : listeners) l.onBridgeLog(stamped);
     }
 
     /** Called from the native SDL thread just before a controller is opened raw. */

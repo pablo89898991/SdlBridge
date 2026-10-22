@@ -31,7 +31,26 @@ static Uint16 g_hk_type_vid[32], g_hk_type_pid[32];
 static int g_hk_type_count;
 static Uint64 g_hk_scan_ms;
 static Uint32 g_hk_changes = 0xffffffffu;
-static jmethodID g_hk_added, g_hk_input, g_hk_removed, g_hk_reply, g_hk_prefetch;
+static jmethodID g_hk_added, g_hk_input, g_hk_removed, g_hk_reply, g_hk_prefetch, g_hk_log;
+
+/* Logged to logcat AND sent to DroidDeck, which writes it into the session's pad.log ("sdl3bridge: ..."). */
+static void hk_log(JNIEnv *env, const char *fmt, ...)
+{
+    char line[400];
+    va_list ap;
+    va_start(ap, fmt);
+    vsnprintf(line, sizeof(line), fmt, ap);
+    va_end(ap);
+    SDL_Log("%s", line);
+    if (env && g_hk_log) {
+        jstring s = (*env)->NewStringUTF(env, line);
+        if (s) {
+            (*env)->CallStaticVoidMethod(env, g_cls, g_hk_log, s);
+            (*env)->DeleteLocalRef(env, s);
+        }
+        if ((*env)->ExceptionCheck(env)) (*env)->ExceptionClear(env);
+    }
+}
 
 /* ---- requests from Java (any thread) -> SDL thread ---- */
 enum { HK_OUT = 0, HK_FEATURE_SET = 1, HK_GET_FEATURE = 2, HK_GET_INPUT = 3 };
@@ -96,6 +115,7 @@ static void hk_java_init(JNIEnv *env)
     g_hk_removed = (*env)->GetStaticMethodID(env, g_cls, "onHookupRemoved", "(I)V");
     g_hk_reply = (*env)->GetStaticMethodID(env, g_cls, "onHookupReply", "(IJ[B)V");
     g_hk_prefetch = (*env)->GetStaticMethodID(env, g_cls, "prefetchHookupDescriptor", "(Ljava/lang/String;)V");
+    g_hk_log = (*env)->GetStaticMethodID(env, g_cls, "onBridgeLog", "(Ljava/lang/String;)V");
     if ((*env)->ExceptionCheck(env)) (*env)->ExceptionClear(env);
 }
 
@@ -123,7 +143,7 @@ static int hookup_count(void)
 static void hk_close(JNIEnv *env, int i, const char *why)
 {
     if (!g_hk[i].dev) return;
-    SDL_Log("hookup: slot %d %04x:%04x released (%s)", i, g_hk[i].vid, g_hk[i].pid, why);
+    hk_log(env, "hookup: slot %d %04x:%04x released (%s)", i, g_hk[i].vid, g_hk[i].pid, why);
     SDL_hid_close(g_hk[i].dev);
     memset(&g_hk[i], 0, sizeof(g_hk[i]));
     if (g_hk_removed) (*env)->CallStaticVoidMethod(env, g_cls, g_hk_removed, (jint)i);
@@ -151,7 +171,7 @@ static bool hk_open(JNIEnv *env, const char *path, Uint16 vid, Uint16 pid, int i
     }
     SDL_hid_device *dev = SDL_hid_open_path(path);
     if (!dev) {
-        SDL_Log("hookup: could not open %s: %s", path, SDL_GetError());
+        hk_log(env, "hookup: could not open %s: %s", path, SDL_GetError());
         return false;
     }
     SDL_hid_set_nonblocking(dev, 1);
@@ -160,7 +180,7 @@ static bool hk_open(JNIEnv *env, const char *path, Uint16 vid, Uint16 pid, int i
     g_hk[slot].vid = vid;
     g_hk[slot].pid = pid;
     g_hk[slot].iface = iface;
-    SDL_Log("hookup: slot %d is %04x:%04x interface %d (%s)", slot, vid, pid, iface, path);
+    hk_log(env, "hookup: slot %d is %04x:%04x interface %d (%s), handing it to DroidDeck", slot, vid, pid, iface, path);
     if (g_hk_added) {
         jstring p = (*env)->NewStringUTF(env, path);
         (*env)->CallStaticVoidMethod(env, g_cls, g_hk_added, (jint)slot, p, (jint)vid, (jint)pid, (jint)iface);
@@ -225,11 +245,14 @@ static void hookup_take_gamepads(JNIEnv *env)
         if (!path) continue;   /* Android input (Bluetooth): cannot be handed over raw */
         Uint16 vid = SDL_GetGamepadVendorForID(ids[i]), pid = SDL_GetGamepadProductForID(ids[i]);
         if (hk_type_known(vid, pid)) continue;
+        hk_log(env, "hookup: taking %04x:%04x \"%s\" from SDL's gamepad layer", vid, pid,
+               SDL_GetGamepadNameForID(ids[i]) ? SDL_GetGamepadNameForID(ids[i]) : "?");
         hk_add_type(vid, pid, hk_path_iface(path));
         handed = true;
     }
     SDL_free(ids);
     if (handed) {
+        hk_log(env, "hookup: restarting SDL's gamepad layer so it lets go (ignored: %s)", g_hk_types);
         hk_apply_ignore_list(env);
         restart_gamepads(env);     /* SDL closes them; they stay ignored; the scan below opens them raw */
         g_hk_changes = 0xffffffffu;
@@ -246,6 +269,7 @@ static void hookup_scan(JNIEnv *env)
         int iface = hk_path_iface(d->path);
         if (want >= 0 && iface != want) continue;
         if (d->bus_type == SDL_HID_API_BUS_BLUETOOTH) continue;
+        if (!hk_path_open(d->path)) hk_log(env, "hookup: found %04x:%04x at %s, opening it raw", d->vendor_id, d->product_id, d->path);
         hk_open(env, d->path, d->vendor_id, d->product_id, iface);
     }
     SDL_hid_free_enumeration(list);
@@ -286,6 +310,7 @@ static void hookup_poll(JNIEnv *env, Uint64 now, bool driver_off)
     if (on != g_hookup_applied) {
         int was = g_hookup_applied;
         g_hookup_applied = on;
+        hk_log(env, "hookup: Steam Native Hook-up %s", on ? "ON" : "OFF");
         if (!on && was == 1) {
             for (int i = 0; i < HOOKUP_SLOTS; i++) hk_close(env, i, "Steam Native Hook-up off");
             g_hk_types[0] = 0;
