@@ -129,6 +129,12 @@ public final class NativeBridge {
         for (Listener l : listeners) l.onHookupAdded(slot, id);
     }
 
+    /** Called from the native SDL thread just before a controller is opened raw. */
+    static void prefetchHookupDescriptor(String path) {
+        android.content.Context c = appContext;
+        if (c != null) HookupIdentity.prefetch(c, path);
+    }
+
     static void onHookupInput(int slot, byte[] report) {
         for (Listener l : listeners) l.onHookupInput(slot, report);
     }

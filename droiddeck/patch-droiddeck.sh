@@ -387,10 +387,10 @@ patch(cpp, [
      'type == PAD_TYPE_DUALSENSE_EDGE ? DUALSENSE_EDGE_HIDRAW_MINOR'),
     ('                                 "DualShock 4", "DualSense"};',
      '                                 "DualShock 4", "DualSense", "DualSense Edge"};',
-     ('"DualSense", "DualSense Edge"}', '"Steam Controller (2015)"}')),
+     ('"DualSense", "DualSense Edge"}', '"Steam Controller (2015)"}', '"no pad"}')),
     ('kNames[was % 5]',
      'kNames[was % 6]',
-     ('kNames[was % 6]', 'kNames[was % 7]')),
+     ('kNames[was % 6]', 'kNames[was % 7]', 'kNames[was % 8]')),
     # Sony touchpad (DualShock 4, DualSense, DualSense Edge): one full-width multitouch surface, never
     # the Deck's two halves. A real Sony pad is a single surface where finger 0 is the primary touch,
     # so confining finger 1 to the right half loses any touch that lands on it alone. put_sony_touch is
@@ -413,21 +413,20 @@ fi
 # GameThreadHints uses Android's PerformanceHintManager to push the game's busiest threads onto the
 # prime CPU cores. It was hard-gated to the Odin 3 (SoC CQ8725S). It is a PURE scheduling hint -- it
 # cannot change how a game runs, so it cannot hurt compatibility -- and it stays behind the user's
-# "game thread hints" setting. Open it to any Qualcomm SoC (same WALT scheduler / power-HAL family),
-# which includes the Snapdragon 8 Gen 2 (SM8550).
+# "game thread hints" setting (step 16 puts it in the session drawer). Open it to any Android 12+ device:
+# a power HAL without hint-session support simply returns no session and nothing happens.
 GTH="$PKG/session/GameThreadHints.kt"
 if [ -f "$GTH" ]; then
   if python3 - "$GTH" <<'PY'
 import sys
 p = sys.argv[1]
 s = open(p, encoding='utf-8').read()
-if "game thread hints: Qualcomm only" not in s:
+if "game thread hints: any device" not in s:
     old = '        if (Build.VERSION.SDK_INT < 31 || Build.SOC_MODEL != "CQ8725S") return "game thread hints: Odin 3 only"'
     new = ('        if (Build.VERSION.SDK_INT < 31) return "game thread hints: needs Android 12+"\n'
-           '        // ADPF boosting is a pure scheduling hint (it cannot change how a game runs), so allow it on\n'
-           '        // any Qualcomm SoC -- the same WALT scheduler / power-HAL family it was tuned on (Odin 3).\n'
-           '        val qualcomm = Build.SOC_MANUFACTURER == "QTI" || Build.SOC_MODEL.startsWith("SM") || Build.SOC_MODEL == "CQ8725S"\n'
-           '        if (!qualcomm) return "game thread hints: Qualcomm only (tuned on Odin 3)"')
+           '        // sdl3bridge: game thread hints: any device. ADPF is a pure scheduling hint (it cannot change\n'
+           '        // how a game runs); a power HAL without hint sessions just returns none and nothing happens.\n'
+           '        // Tuned on the Odin 3; switch it off in the session drawer (Latency) if a device behaves worse.')
     if s.count(old) != 1:
         sys.stderr.write("ANCHOR-MISS GameThreadHints device gate (found %d)\n" % s.count(old))
         sys.exit(3)
@@ -435,7 +434,7 @@ if "game thread hints: Qualcomm only" not in s:
     open(p, 'w', encoding='utf-8').write(s)
 sys.stdout.write("OK\n")
 PY
-  then ok "ADPF game-thread boosting unlocked (any Qualcomm SoC)"
+  then ok "ADPF game-thread boosting unlocked (any Android 12+ device)"
   else die "GameThreadHints patch failed: an upstream anchor moved (see ANCHOR-MISS above)."
   fi
 else
@@ -552,7 +551,8 @@ def patch(path, edits):
     for edit in edits:
         old, new, marker = edit[0], edit[1], edit[2]
         want = edit[3] if len(edit) > 3 else 1
-        if marker in s:
+        markers = marker if isinstance(marker, tuple) else (marker,)
+        if any(m in s for m in markers):
             continue  # already applied (idempotent)
         n = s.count(old)
         if n != want:
@@ -853,10 +853,10 @@ patch(cpp, [
      'type == PAD_TYPE_STEAM_2015 ? SC1_HIDRAW_MINOR'),
     ('"DualSense", "DualSense Edge"};',
      '"DualSense", "DualSense Edge",\n                                 "Steam Controller (2015)"};',
-     '"Steam Controller (2015)"};'),
+     ('"Steam Controller (2015)"};', '"Steam Controller (2015)", "no pad"};')),
     ('kNames[was % 6]',
      'kNames[was % 7]',
-     'kNames[was % 7]'),
+     ('kNames[was % 7]', 'kNames[was % 8]')),
 ])
 sys.stdout.write("OK\n")
 PY
@@ -1042,7 +1042,7 @@ patch(sdp, '            hidrawClassDir = hidrawClass\n',
       'sysDevicesDir = devices')
 patch(svc, '                guest.add("FAKE_DECK_SYSFS_LISTING=" + SteamDeckPad.listingDir(fakeInputDir.parentFile!!.parentFile!!).path)\n',
       '                if (com.droiddeck.launcher.input.HookupBridge.wanted(this))\n'
-      '                    com.droiddeck.launcher.input.HookupBridge.prepare(fakeInputDir)?.let { guest.add("FAKE_HOOKUP_SHM=" + it.path) }\n'
+      '                    com.droiddeck.launcher.input.HookupBridge.prepare(fakeInputDir, File(sessionDir, "pad.log"))?.let { guest.add("FAKE_HOOKUP_SHM=" + it.path) }\n'
       '                guest.add("FAKE_DECK_SYSFS_LISTING=" + SteamDeckPad.listingDir(fakeInputDir.parentFile!!.parentFile!!).path)\n',
       'FAKE_HOOKUP_SHM=')
 print("OK")
@@ -1052,6 +1052,177 @@ PY
   fi
 else
   warn "fakeinput_steam.cpp / SteamDeckPad.kt / SessionService.kt not found (skipping Steam Native Hook-up)"
+fi
+
+# ---------- 16. "Game thread boost" switch in the session drawer (Latency group) ----------
+# DroidDeck already had a gameThreadHints preference (default on) but no switch for it. Add one next to
+# the low-latency switches; it takes effect immediately (starts/stops the boosting in the running session).
+SP="$PKG/session/SessionPrefs.kt"
+SO="$PKG/ui/SessionOverlay.kt"
+SA="$PKG/SessionActivity.kt"
+STR="$DD/app/src/main/res/values/strings.xml"
+if [ -f "$SP" ] && [ -f "$SO" ] && [ -f "$SA" ] && [ -f "$STR" ]; then
+  if python3 - "$SP" "$SO" "$SA" "$STR" <<'PY'
+import sys
+sp, so, sa, st = sys.argv[1:5]
+def patch(path, edits):
+    s = open(path, encoding='utf-8').read()
+    for old, new, marker in edits:
+        if marker in s:
+            continue
+        if s.count(old) != 1:
+            sys.stderr.write("ANCHOR-MISS %s :: %r (found %d)\n" % (path, old[:70], s.count(old)))
+            sys.exit(3)
+        s = s.replace(old, new, 1)
+    open(path, 'w', encoding='utf-8').write(s)
+patch(sp, [(
+    '    fun gameThreadHints(context: Context): Boolean = prefs(context).getBoolean("gameThreadHints", true)\n',
+    '    fun gameThreadHints(context: Context): Boolean = prefs(context).getBoolean("gameThreadHints", true)\n\n'
+    '    fun setGameThreadHints(context: Context, on: Boolean) {\n'
+    '        prefs(context).edit().putBoolean("gameThreadHints", on).apply()\n'
+    '    }\n',
+    'fun setGameThreadHints(')])
+patch(so, [
+    ('    val onLowLatencyTouch: (Boolean) -> Unit = {},\n',
+     '    val onLowLatencyTouch: (Boolean) -> Unit = {},\n'
+     '    val gameThreadHints: Boolean = true,\n'
+     '    val onGameThreadHints: (Boolean) -> Unit = {},\n',
+     'val onGameThreadHints:'),
+    ('                                    chipModifier = focus.track(page, "low-latency-touch"), onChange = a.onLowLatencyTouch)\n',
+     '                                    chipModifier = focus.track(page, "low-latency-touch"), onChange = a.onLowLatencyTouch)\n'
+     '                                ToggleRow(host, "game-thread-hints", stringResource(R.string.drawer_game_thread_hints),\n'
+     '                                    stringResource(R.string.drawer_game_thread_hints_hint), a.gameThreadHints,\n'
+     '                                    chipModifier = focus.track(page, "game-thread-hints"), onChange = a.onGameThreadHints)\n',
+     '"game-thread-hints"'),
+])
+patch(sa, [
+    ('    private var lowLatencyTouch by mutableStateOf(false)\n',
+     '    private var lowLatencyTouch by mutableStateOf(false)\n'
+     '    private var gameThreadHints by mutableStateOf(true)\n',
+     'private var gameThreadHints by'),
+    ('        lowLatencyTouch = SessionPrefs.lowLatencyTouch(this)\n',
+     '        lowLatencyTouch = SessionPrefs.lowLatencyTouch(this)\n'
+     '        gameThreadHints = SessionPrefs.gameThreadHints(this)\n',
+     'gameThreadHints = SessionPrefs.gameThreadHints(this)'),
+    ('                    lowLatencyTouch = lowLatencyTouch,\n',
+     '                    lowLatencyTouch = lowLatencyTouch,\n'
+     '                    gameThreadHints = gameThreadHints,\n'
+     '                    onGameThreadHints = { on ->\n'
+     '                        SessionPrefs.setGameThreadHints(this@SessionActivity, on)\n'
+     '                        gameThreadHints = on\n'
+     '                        if (on) android.util.Log.i("GameThreadHints", com.droiddeck.launcher.session.GameThreadHints.start(this@SessionActivity))\n'
+     '                        else com.droiddeck.launcher.session.GameThreadHints.stop()\n'
+     '                    },\n',
+     'onGameThreadHints = { on ->'),
+])
+patch(st, [(
+    '</resources>',
+    '    <string name="drawer_game_thread_hints">Game thread boost</string>\n'
+    '    <string name="drawer_game_thread_hints_hint">Moves the busiest game threads to the fastest CPU cores (Android performance hints). Turn off if a game paces worse.</string>\n'
+    '</resources>',
+    'drawer_game_thread_hints')])
+print("OK")
+PY
+  then ok "session drawer: Game thread boost switch"
+  else die "Game thread boost switch: an upstream anchor moved (see ANCHOR-MISS above)."
+  fi
+else
+  warn "SessionPrefs/SessionOverlay/SessionActivity/strings.xml not found (skipping Game thread boost switch)"
+fi
+
+# ---------- 17. "Game thread boost" switch in DroidDeck's Settings -> Performance page too ----------
+PD="$PKG/ui/PerformanceDialog.kt"
+MA="$PKG/MainActivity.kt"
+if [ -f "$PD" ] && [ -f "$MA" ]; then
+  if python3 - "$PD" "$MA" <<'PY'
+import sys
+pd, ma = sys.argv[1], sys.argv[2]
+def patch(path, edits):
+    s = open(path, encoding='utf-8').read()
+    for old, new, marker in edits:
+        if marker in s:
+            continue
+        if s.count(old) != 1:
+            sys.stderr.write("ANCHOR-MISS %s :: %r (found %d)\n" % (path, old[:70], s.count(old)))
+            sys.exit(3)
+        s = s.replace(old, new, 1)
+    open(path, 'w', encoding='utf-8').write(s)
+patch(pd, [
+    ('    gpuClockPin: Boolean,\n', '    gpuClockPin: Boolean,\n    gameThreadHints: Boolean = true,\n', 'gameThreadHints: Boolean = true,'),
+    ('    onGpuClockPin: (Boolean) -> Unit,\n', '    onGpuClockPin: (Boolean) -> Unit,\n    onGameThreadHints: (Boolean) -> Unit = {},\n',
+     'onGameThreadHints: (Boolean) -> Unit = {},'),
+    ('                gamescopeRealtime, onChange = onGamescopeRealtime,\n            )\n',
+     '                gamescopeRealtime, onChange = onGamescopeRealtime,\n            )\n'
+     '            ToggleRow(\n'
+     '                host, "gamethreadhints", stringResource(R.string.drawer_game_thread_hints),\n'
+     '                stringResource(R.string.drawer_game_thread_hints_hint),\n'
+     '                gameThreadHints, onChange = onGameThreadHints,\n'
+     '            )\n',
+     '"gamethreadhints"'),
+])
+patch(ma, [
+    ('    private var gpuClockPin by mutableStateOf(false)\n',
+     '    private var gpuClockPin by mutableStateOf(false)\n    private var gameThreadHints by mutableStateOf(true)\n',
+     'private var gameThreadHints by'),
+    ('            gpuClockPin = gpuClockPin,\n', '            gpuClockPin = gpuClockPin,\n            gameThreadHints = gameThreadHints,\n',
+     'gameThreadHints = gameThreadHints,'),
+    ('            onGpuClockPin = { on -> SessionPrefs.setGpuClockPin(this, on); gpuClockPin = on },\n',
+     '            onGpuClockPin = { on -> SessionPrefs.setGpuClockPin(this, on); gpuClockPin = on },\n'
+     '            onGameThreadHints = { on -> SessionPrefs.setGameThreadHints(this, on); gameThreadHints = on },\n',
+     'onGameThreadHints = { on ->'),
+    ('        gpuClockPin = SessionPrefs.gpuClockPin(this)\n',
+     '        gpuClockPin = SessionPrefs.gpuClockPin(this)\n        gameThreadHints = SessionPrefs.gameThreadHints(this)\n',
+     'gameThreadHints = SessionPrefs.gameThreadHints(this)'),
+])
+print("OK")
+PY
+  then ok "Settings -> Performance: Game thread boost switch"
+  else die "Performance page switch: an upstream anchor moved (see ANCHOR-MISS above)."
+  fi
+else
+  warn "PerformanceDialog.kt / MainActivity.kt not found (skipping Performance page switch)"
+fi
+
+# ---------- 18. Steam Native Hook-up: no extra Steam Deck pad next to the real controller ----------
+# While controllers are handed to Steam (and no bridged gamepad needs it), DroidDeck's own Steam Deck pad
+# is withdrawn (pad type 7 = none), so the real controller is player 1 -- like plugging it into a PC.
+CPP="$DD/app/src/main/cpp/fakeinput_steam.cpp"
+FIW="$IN/FakeInputWriter.java"
+if [ -f "$CPP" ] && [ -f "$FIW" ]; then
+  if python3 - "$CPP" "$FIW" <<'PY'
+import sys
+cpp, fiw = sys.argv[1], sys.argv[2]
+def patch(path, edits):
+    s = open(path, encoding='utf-8').read()
+    for old, new, marker in edits:
+        if marker in s:
+            continue
+        if s.count(old) != 1:
+            sys.stderr.write("ANCHOR-MISS %s :: %r (found %d)\n" % (path, old[:70], s.count(old)))
+            sys.exit(3)
+        s = s.replace(old, new, 1)
+    open(path, 'w', encoding='utf-8').write(s)
+patch(cpp, [
+    ('PAD_TYPE_STEAM_2015 = 6, PAD_TYPE_LAST = PAD_TYPE_STEAM_2015;',
+     'PAD_TYPE_STEAM_2015 = 6,\n                          PAD_TYPE_NONE = 7, PAD_TYPE_LAST = PAD_TYPE_NONE;',
+     'PAD_TYPE_NONE = 7'),
+    ('__attribute__((visibility("hidden"))) static int pad_type_uevent(uint32_t type, const char *action) {\n',
+     '__attribute__((visibility("hidden"))) static int pad_type_uevent(uint32_t type, const char *action) {\n'
+     '  if (type == PAD_TYPE_NONE) return 0;  // sdl3bridge: no pad (real controllers handed to Steam)\n',
+     'if (type == PAD_TYPE_NONE) return 0;'),
+    ('"Steam Controller (2015)"};', '"Steam Controller (2015)", "no pad"};', '"no pad"};'),
+    ('kNames[was % 7]', 'kNames[was % 8]', 'kNames[was % 8]'),
+])
+patch(fiw, [
+    ('    public static final int PAD_TYPE_STEAM_2015 = 6;\n',
+     '    public static final int PAD_TYPE_STEAM_2015 = 6;\n    public static final int PAD_TYPE_NONE = 7;\n',
+     'PAD_TYPE_NONE = 7'),
+])
+print("OK")
+PY
+  then ok "pad type 'none' while controllers are handed to Steam"
+  else die "pad type none: an upstream anchor moved (see ANCHOR-MISS above)."
+  fi
 fi
 
 echo

@@ -31,7 +31,7 @@ static Uint16 g_hk_type_vid[32], g_hk_type_pid[32];
 static int g_hk_type_count;
 static Uint64 g_hk_scan_ms;
 static Uint32 g_hk_changes = 0xffffffffu;
-static jmethodID g_hk_added, g_hk_input, g_hk_removed, g_hk_reply;
+static jmethodID g_hk_added, g_hk_input, g_hk_removed, g_hk_reply, g_hk_prefetch;
 
 /* ---- requests from Java (any thread) -> SDL thread ---- */
 enum { HK_OUT = 0, HK_FEATURE_SET = 1, HK_GET_FEATURE = 2, HK_GET_INPUT = 3 };
@@ -95,6 +95,7 @@ static void hk_java_init(JNIEnv *env)
     g_hk_input = (*env)->GetStaticMethodID(env, g_cls, "onHookupInput", "(I[B)V");
     g_hk_removed = (*env)->GetStaticMethodID(env, g_cls, "onHookupRemoved", "(I)V");
     g_hk_reply = (*env)->GetStaticMethodID(env, g_cls, "onHookupReply", "(IJ[B)V");
+    g_hk_prefetch = (*env)->GetStaticMethodID(env, g_cls, "prefetchHookupDescriptor", "(Ljava/lang/String;)V");
     if ((*env)->ExceptionCheck(env)) (*env)->ExceptionClear(env);
 }
 
@@ -140,6 +141,14 @@ static bool hk_open(JNIEnv *env, const char *path, Uint16 vid, Uint16 pid, int i
     int slot = -1;
     for (int i = 0; i < HOOKUP_SLOTS; i++) if (!g_hk[i].dev) { slot = i; break; }
     if (slot < 0) return false;
+    /* Read the HID report descriptor while nobody holds the interface (Android refuses an interface request
+     * on an interface another connection has claimed), so Steam gets the controller's real one. */
+    if (g_hk_prefetch) {
+        jstring p = (*env)->NewStringUTF(env, path);
+        (*env)->CallStaticVoidMethod(env, g_cls, g_hk_prefetch, p);
+        (*env)->DeleteLocalRef(env, p);
+        if ((*env)->ExceptionCheck(env)) (*env)->ExceptionClear(env);
+    }
     SDL_hid_device *dev = SDL_hid_open_path(path);
     if (!dev) {
         SDL_Log("hookup: could not open %s: %s", path, SDL_GetError());

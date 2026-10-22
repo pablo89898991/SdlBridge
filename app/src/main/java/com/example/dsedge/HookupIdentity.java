@@ -25,6 +25,35 @@ final class HookupIdentity {
 
     private HookupIdentity() {}
 
+    /** Report descriptors read before the raw open, by SDL hid path. */
+    private static final java.util.Map<String, byte[]> prefetched = new java.util.concurrent.ConcurrentHashMap<>();
+
+    static void prefetch(Context context, String path) {
+        try {
+            UsbManager um = (UsbManager) context.getSystemService(Context.USB_SERVICE);
+            UsbDevice dev = um == null ? null : um.getDeviceList().get(deviceName(path));
+            int index = ifaceIndex(path);
+            if (dev == null || index < 0 || index >= dev.getInterfaceCount()) return;
+            UsbInterface f = dev.getInterface(index);
+            if (f.getInterfaceClass() != UsbConstants.USB_CLASS_HID) return;
+            byte[] d = readReportDescriptor(um, dev, f);
+            if (d != null) prefetched.put(path, d);
+            Log.i(TAG, "hookup: report descriptor of " + path + ": " + (d == null ? "unreadable" : d.length + " bytes"));
+        } catch (RuntimeException e) {
+            Log.w(TAG, "hookup: descriptor prefetch failed: " + e);
+        }
+    }
+
+    private static String deviceName(String path) {
+        String n = path;
+        for (int i = 0; i < 3 && n.lastIndexOf('/') > 0; i++) n = n.substring(0, n.lastIndexOf('/'));
+        return n;
+    }
+
+    private static int ifaceIndex(String path) {
+        try { return Integer.parseInt(path.substring(path.lastIndexOf('/') + 1)); } catch (RuntimeException e) { return -1; }
+    }
+
     private static byte[] bytes(int... v) {
         byte[] b = new byte[v.length];
         for (int i = 0; i < v.length; i++) b[i] = (byte) v[i];
@@ -44,9 +73,7 @@ final class HookupIdentity {
         byte[] descriptor = null;
         try {
             UsbManager um = (UsbManager) context.getSystemService(Context.USB_SERVICE);
-            String deviceName = path;
-            for (int i = 0; i < 3 && deviceName.lastIndexOf('/') > 0; i++) deviceName = deviceName.substring(0, deviceName.lastIndexOf('/'));
-            UsbDevice dev = um == null ? null : um.getDeviceList().get(deviceName);
+            UsbDevice dev = um == null ? null : um.getDeviceList().get(deviceName(path));
             if (dev != null) {
                 if (ifaceIndex >= 0 && ifaceIndex < dev.getInterfaceCount()) {
                     UsbInterface f = dev.getInterface(ifaceIndex);
@@ -59,7 +86,9 @@ final class HookupIdentity {
                 try { product = nz(dev.getProductName()); } catch (SecurityException ignored) { }
                 try { serial = nz(dev.getSerialNumber()); } catch (SecurityException ignored) { }
                 version = parseBcd(dev.getVersion());
-                if (ifaceClass == UsbConstants.USB_CLASS_HID) descriptor = readReportDescriptor(um, dev, ifaceNumber);
+                descriptor = prefetched.remove(path);
+                if (descriptor == null && ifaceClass == UsbConstants.USB_CLASS_HID && ifaceIndex >= 0 && ifaceIndex < dev.getInterfaceCount())
+                    descriptor = readReportDescriptor(um, dev, dev.getInterface(ifaceIndex));
                 String joined = (manufacturer.isEmpty() || product.startsWith(manufacturer)) ? product : manufacturer + " " + product;
                 if (!joined.trim().isEmpty()) name = joined.trim();
             }
@@ -96,14 +125,23 @@ final class HookupIdentity {
         }
     }
 
-    /** GET_DESCRIPTOR(HID report) on the interface, over a second connection (SDL keeps its own). */
-    private static byte[] readReportDescriptor(UsbManager um, UsbDevice dev, int ifaceNumber) {
+    /** GET_DESCRIPTOR(HID report) on the interface, over a second connection. */
+    private static byte[] readReportDescriptor(UsbManager um, UsbDevice dev, UsbInterface iface) {
         UsbDeviceConnection c = null;
         try {
             c = um.openDevice(dev);
             if (c == null) return null;
             byte[] buf = new byte[4096];
+            int ifaceNumber = iface.getId();
+            // Interface-recipient request (the standard one). If another connection holds the interface,
+            // Android refuses it; claim it briefly (nobody holds it right before the raw open), and as a last
+            // resort ask with device recipient, which most controllers answer the same way.
             int n = c.controlTransfer(0x81, 0x06, 0x2200, ifaceNumber, buf, buf.length, 500);
+            if (n <= 0 && c.claimInterface(iface, false)) {
+                n = c.controlTransfer(0x81, 0x06, 0x2200, ifaceNumber, buf, buf.length, 500);
+                c.releaseInterface(iface);
+            }
+            if (n <= 0) n = c.controlTransfer(0x80, 0x06, 0x2200, ifaceNumber, buf, buf.length, 500);
             if (n <= 0) return null;
             byte[] out = new byte[n];
             System.arraycopy(buf, 0, out, 0, n);
