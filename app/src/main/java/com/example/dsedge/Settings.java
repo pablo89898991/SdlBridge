@@ -62,7 +62,10 @@ final class Settings {
     static final int[] playerLed = new int[PLAYERS];
 
     // ---- global settings ----
-    static volatile boolean forceUsb = true;
+    // Auto by default: any SDL3-supported controller is used -- through SDL3's own USB driver when possible
+    // (full features), otherwise through Android's input (e.g. Bluetooth). An Android duplicate of a controller
+    // SDL3 already drives over USB is still ignored, so nothing is doubled.
+    static volatile boolean forceUsb = false;
     static volatile boolean driverEnabled = true;
     static volatile int presentAs = 0;
     static final String[] PRESENT_NAMES = { "Steam Deck (default)", "DualSense (native)", "DualSense Edge (native)", "DualShock 4 (native)",
@@ -109,7 +112,7 @@ final class Settings {
             brightness[p] = clamp(prefs.getInt("brightness" + s, 100), 0, 100);
             playerLed[p] = clamp(prefs.getInt("playerLed" + s, 0), 0, 4);
         }
-        forceUsb = prefs.getBoolean("forceUsb", true);
+        forceUsb = prefs.getBoolean("forceUsbV2", false);
         driverEnabled = prefs.getBoolean("driverEnabled", true);
         presentAs = clamp(prefs.getInt("presentAs", 0), 0, PRESENT_NAMES.length - 1);
         pollMs = clamp(prefs.getInt("pollMs", 2), 1, 16);
@@ -134,7 +137,7 @@ final class Settings {
             e.putInt("lightR" + s, lightR[p]).putInt("lightG" + s, lightG[p]).putInt("lightB" + s, lightB[p]);
             e.putInt("brightness" + s, brightness[p]).putInt("playerLed" + s, playerLed[p]);
         }
-        e.putBoolean("forceUsb", forceUsb);
+        e.putBoolean("forceUsbV2", forceUsb);
         e.putBoolean("driverEnabled", driverEnabled);
         e.putInt("presentAs", presentAs);
         e.putInt("pollMs", pollMs);

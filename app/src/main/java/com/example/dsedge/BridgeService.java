@@ -224,7 +224,6 @@ public class BridgeService extends Service implements NativeBridge.Listener {
     /** Tap action: flip the SDL3 forced driver and recolor the bubble. */
     private void toggleDriver() {
         Settings.driverEnabled = !Settings.driverEnabled;
-        if (Settings.driverEnabled) Settings.forceUsb = true;   // on = forced SDL3 USB
         Settings.save();
         NativeBridge.applyDriver();
         try { BridgeActivity.setHidFrozen(!Settings.driverEnabled); } catch (Throwable ignored) { }

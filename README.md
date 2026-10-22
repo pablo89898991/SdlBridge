@@ -134,6 +134,15 @@ Also available: DualSense Edge, Steam Controller 2026 (28de:1302) and Steam Cont
 For the 2015 model the touchpad is always split into its two trackpads, the D-pad clicks the left trackpad's
 edges, the right stick is unused (the real controller has none) and back buttons / Fn map to the two grips.
 
+## Any SDL3-supported controller
+
+"Controller source" defaults to **Auto**: every controller SDL3 supports is used. Plugged in by USB, SDL3's
+own driver reads it with all its extras (gyro, touchpads, back paddles, misc buttons) -- PlayStation, Xbox,
+Switch / Switch 2, Steam Controller 2015, 8BitDo, Flydigi, Hori, PowerA and the rest of SDL3's list. Over
+Bluetooth (or any controller SDL3's USB driver can't open) it is read through Android's input instead. An
+Android duplicate of a controller SDL3 already drives over USB is ignored, so nothing is doubled. A generic
+controller with no SDL mapping gets a default layout. "Forced" keeps the old USB-only behaviour.
+
 ## Steam Controller (2026) over USB cable or wireless puck
 
 Plug a Steam Controller (2026) in with a cable (28de:1302), or plug in its wireless puck (28de:1304/1305), and

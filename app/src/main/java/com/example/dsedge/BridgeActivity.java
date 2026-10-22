@@ -166,10 +166,10 @@ public class BridgeActivity extends SDLActivity implements NativeBridge.Listener
         LinearLayout drv = card(root);
         cardTitle(drv, "SDL3 driver");
         addSpinner(drv, "Controller source", new String[] {
-            "Forced: only SDL3's USB driver (full features, needs USB cable)",
-            "Auto: also accept Android basic input (no gyro/back buttons on Edge)"
-        }, Settings.forceUsb ? 0 : 1, v -> {
-            Settings.forceUsb = v == 0;
+            "Auto: any controller (SDL3 USB driver when plugged in, else Android/Bluetooth)",
+            "Forced: only SDL3's USB driver (USB cable only)"
+        }, Settings.forceUsb ? 1 : 0, v -> {
+            Settings.forceUsb = v == 1;
             Settings.save();
             NativeBridge.applyForce();
         });

@@ -243,7 +243,8 @@ static void describe(SDL_Gamepad *pad, char *buf, size_t n)
     SDL_JoystickConnectionState cs = SDL_GetGamepadConnectionState(pad);
     snprintf(buf, n, "Connected: %s [%s] vid=%04x pid=%04x %s | gyro:%s accel:%s touchpads:%d",
              name ? name : "gamepad",
-             pad_is_full_driver(pad) ? "SDL3 USB driver: full features" : "Android basic input: NO gyro or back buttons",
+             pad_is_full_driver(pad) ? "SDL3 USB driver: full features"
+                                     : "Android input (e.g. Bluetooth): SDL3's own driver can't reach it, some extras may be missing",
              (unsigned)SDL_GetGamepadVendor(pad), (unsigned)SDL_GetGamepadProduct(pad),
              cs == SDL_JOYSTICK_CONNECTION_WIRED ? "wired" : (cs == SDL_JOYSTICK_CONNECTION_WIRELESS ? "wireless" : "link unknown"),
              SDL_GamepadHasSensor(pad, SDL_SENSOR_GYRO) ? "yes" : "no",
@@ -331,10 +332,12 @@ static void refresh_status(JNIEnv *env)
         for (int i = 0; ids && i < cnt; i++) if (!usable_id(ids[i])) ignored++;
         SDL_free(ids);
         snprintf(diag, sizeof(diag),
-                 "Forced SDL3 USB mode: waiting for the USB driver. Plug the controller in with a USB-C cable "
-                 "(Bluetooth cannot be used), then tap 'Force SDL3 USB driver' and allow USB access. "
-                 "Ignored Android-only controllers: %d", ignored);
-        if (!atomic_load(&g_force)) snprintf(diag, sizeof(diag), "Waiting for a controller (plug it in via USB-C)");
+                 "Forced SDL3 USB mode: waiting for the USB driver. Plug the controller in with a USB-C cable, "
+                 "then tap 'Force SDL3 USB driver' and allow USB access (or switch Controller source to Auto to "
+                 "also use Bluetooth / Android-only controllers). Ignored Android-only controllers: %d", ignored);
+        if (!atomic_load(&g_force))
+            snprintf(diag, sizeof(diag), "Waiting for a controller: plug any SDL3-supported controller in via USB-C "
+                     "(full features) or connect it over Bluetooth");
     }
     if (strcmp(diag, g_last_diag) != 0) {
         SDL_strlcpy(g_last_diag, diag, sizeof(g_last_diag));
@@ -442,6 +445,48 @@ static void drop_unusable(JNIEnv *env)
     }
 }
 
+/* SDL only reports a joystick as a gamepad when it has a mapping. SDL ships mappings for thousands of
+ * controllers and Android generates one for every Android gamepad, but a rare generic one (arcade stick,
+ * cheap USB pad) may have none -- give it a sensible default layout so it still works as a player. */
+static void map_unmapped_joystick(SDL_JoystickID id)
+{
+    if (SDL_IsGamepad(id)) return;
+    SDL_Joystick *joy = SDL_OpenJoystick(id);
+    if (!joy) return;
+    int nb = SDL_GetNumJoystickButtons(joy), na = SDL_GetNumJoystickAxes(joy), nh = SDL_GetNumJoystickHats(joy);
+    char guid[64], map[1024];
+    SDL_GUIDToString(SDL_GetJoystickGUID(joy), guid, sizeof(guid));
+    const char *name = SDL_GetJoystickName(joy);
+    char clean[128];
+    SDL_strlcpy(clean, name ? name : "Generic controller", sizeof(clean));
+    for (char *c = clean; *c; c++) if (*c == ',') *c = ' ';
+    SDL_CloseJoystick(joy);
+    if (nb == 0 && na == 0) return;
+    snprintf(map, sizeof(map), "%s,%s,", guid, clean);
+    static const char *btn[] = { "a", "b", "x", "y", "leftshoulder", "rightshoulder", "back", "start",
+                                 "leftstick", "rightstick", "guide", "lefttrigger", "righttrigger" };
+    char one[48];
+    int first_trigger_button = na >= 6 ? 11 : 13;   /* analog triggers when there are 6+ axes */
+    for (int b = 0; b < nb && b < (int)SDL_arraysize(btn); b++) {
+        if (b >= first_trigger_button) break;
+        snprintf(one, sizeof(one), "%s:b%d,", btn[b], b);
+        SDL_strlcat(map, one, sizeof(map));
+    }
+    if (na < 6) {
+        for (int b = 11; b < nb && b < 13; b++) {
+            snprintf(one, sizeof(one), "%s:b%d,", btn[b], b);
+            SDL_strlcat(map, one, sizeof(map));
+        }
+    }
+    static const char *ax[] = { "leftx", "lefty", "rightx", "righty", "lefttrigger", "righttrigger" };
+    for (int a = 0; a < na && a < 6; a++) {
+        snprintf(one, sizeof(one), "%s:a%d,", ax[a], a);
+        SDL_strlcat(map, one, sizeof(map));
+    }
+    if (nh > 0) SDL_strlcat(map, "dpup:h0.1,dpright:h0.2,dpdown:h0.4,dpleft:h0.8,", sizeof(map));
+    if (SDL_AddGamepadMapping(map) >= 0) SDL_Log("bridge: default mapping for unmapped \"%s\": %s", clean, map);
+}
+
 int main(int argc, char *argv[])
 {
     (void)argc; (void)argv;
@@ -452,8 +497,11 @@ int main(int argc, char *argv[])
     SDL_SetHint(SDL_HINT_JOYSTICK_HIDAPI_PS5, "1");
     SDL_SetHint(SDL_HINT_JOYSTICK_HIDAPI_PS4, "1");
     SDL_SetHint(SDL_HINT_JOYSTICK_HIDAPI_PS5_PLAYER_LED, "1");
-    /* Valve controllers are not read as gamepads: the Steam Controller (2026) is opened raw (triton.h). */
-    SDL_SetHint(SDL_HINT_JOYSTICK_HIDAPI_STEAM, "0");
+    /* Every SDL3 USB (HIDAPI) driver on, including Valve's (Steam Controller 2015 cable/dongle; it is off by
+     * default in SDL). Only the Steam Controller (2026) is kept away from SDL's gamepad layer: it is passed
+     * through raw instead (triton.h). That hint hides it from gamepads but not from SDL_hid_enumerate. */
+    SDL_SetHint(SDL_HINT_JOYSTICK_HIDAPI_STEAM, "1");
+    SDL_SetHint(SDL_HINT_GAMECONTROLLER_IGNORE_DEVICES, "0x28de/0x1302,0x28de/0x1304,0x28de/0x1305");
 
     JNIEnv *env = (JNIEnv *)SDL_GetAndroidJNIEnv();
     if (!env || !g_cls) return 1;
@@ -472,7 +520,9 @@ int main(int argc, char *argv[])
     for (;;) {
         SDL_Event e;
         while (SDL_PollEvent(&e)) {
-            if (e.type == SDL_EVENT_GAMEPAD_ADDED) {
+            if (e.type == SDL_EVENT_JOYSTICK_ADDED) {
+                map_unmapped_joystick(e.jdevice.which);
+            } else if (e.type == SDL_EVENT_GAMEPAD_ADDED) {
                 drop_unusable(env);
                 open_unopened(env);
             } else if (e.type == SDL_EVENT_GAMEPAD_REMOVED) {
