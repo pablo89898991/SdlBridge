@@ -146,14 +146,38 @@ if [ -f "$SA" ]; then
     warn "SessionActivity: add  com.droiddeck.launcher.input.DualSenseBridge.attach(this, bridge)  after the PadBridge is created"
   fi
 
-  # 4c. detach on teardown (inside onDestroy, next to padBridge?.stop())
-  if grep -q "DualSenseBridge.detach(" "$SA"; then
-    skip "SessionActivity detach()"
+  # 4c. session screen closing: forget its PadBridge, but KEEP the bridge connected (hook-up, passthrough)
+  #     -- Android closes/recreates this screen when you switch apps while the session keeps running.
+  if grep -q "DualSenseBridge.screenClosed(" "$SA"; then
+    skip "SessionActivity screenClosed()"
   elif grep -q "padBridge?.stop()" "$SA"; then
-    sed -i '/padBridge?.stop()/a\        com.droiddeck.launcher.input.DualSenseBridge.detach(this)' "$SA"
-    grep -q "DualSenseBridge.detach(" "$SA" && ok "SessionActivity detach()" || warn "SessionActivity detach() NOT inserted"
+    sed -i '/padBridge?.stop()/a\        com.droiddeck.launcher.input.DualSenseBridge.screenClosed(this)' "$SA"
+    grep -q "DualSenseBridge.screenClosed(" "$SA" && ok "SessionActivity screenClosed()" || warn "SessionActivity screenClosed() NOT inserted"
   else
-    warn "SessionActivity: add  com.droiddeck.launcher.input.DualSenseBridge.detach()  where the session is destroyed"
+    warn "SessionActivity: add  com.droiddeck.launcher.input.DualSenseBridge.screenClosed(this)  in onDestroy"
+  fi
+  # 4d. disconnect from the bridge only when the SESSION ends (or DroidDeck is closed)
+  SVC4="$PKG/session/SessionService.kt"
+  if [ -f "$SVC4" ]; then
+    if grep -q "DualSenseBridge.detach()" "$SVC4"; then
+      skip "SessionService detach() at session end"
+    else
+      python3 - "$SVC4" <<'PY'
+import sys
+p = sys.argv[1]
+s = open(p, encoding='utf-8').read()
+done = 0
+for old in ("        GameThreadHints.stop()\n        SessionEvents.transition(SessionPhase.STOPPING",
+            "        GameThreadHints.stop() // also when the session never got as far as running\n"):
+    if s.count(old) == 1:
+        first, rest = old.split("\n", 1)
+        s = s.replace(old, first + "\n        com.droiddeck.launcher.input.DualSenseBridge.detach()\n" + rest, 1)
+        done += 1
+open(p, 'w', encoding='utf-8').write(s)
+print(done)
+PY
+      grep -q "DualSenseBridge.detach()" "$SVC4" && ok "SessionService detach() at session end" || warn "SessionService detach() NOT inserted (bridge stays bound until DroidDeck is closed)"
+    fi
   fi
 else
   warn "SessionActivity.kt not found at $SA"

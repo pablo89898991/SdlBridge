@@ -69,8 +69,14 @@ public class BridgeActivity extends SDLActivity implements NativeBridge.Listener
 
     private int dp(int v) { return (int) TypedValue.applyDimension(TypedValue.COMPLEX_UNIT_DIP, v, getResources().getDisplayMetrics()); }
 
+    /** True while the bridge screen (and with it the SDL3 loop) is alive. */
+    static volatile boolean running;
+    /** Started by a controller being plugged in: keep running, but stay in the background. */
+    static final String EXTRA_BACKGROUND = "background";
+
     @Override protected void onCreate(Bundle state) {
         NativeBridge.appContext = getApplicationContext();
+        running = true;
         super.onCreate(state);
         Settings.init(this);
         UpdateChecker.BuildInfo info = UpdateChecker.readBuildInfo(this);
@@ -570,6 +576,7 @@ public class BridgeActivity extends SDLActivity implements NativeBridge.Listener
     // ---------- SDL USB handling ----------
 
     @Override protected void onDestroy() {
+        running = false;
         ui.removeCallbacks(usbRefresh);
         NativeBridge.listeners.remove(this);
         super.onDestroy();
@@ -614,6 +621,10 @@ public class BridgeActivity extends SDLActivity implements NativeBridge.Listener
 
     @Override protected void onResume() {
         super.onResume();
+        if (getIntent() != null && getIntent().getBooleanExtra(EXTRA_BACKGROUND, false)) {
+            getIntent().removeExtra(EXTRA_BACKGROUND);
+            moveTaskToBack(true);   // started by a plugged-in controller: run, but don't take the screen
+        }
         if (android.provider.Settings.canDrawOverlays(this)) {
             if (pendingBubble) {
                 pendingBubble = false;
