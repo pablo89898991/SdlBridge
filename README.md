@@ -143,6 +143,22 @@ Bluetooth (or any controller SDL3's USB driver can't open) it is read through An
 Android duplicate of a controller SDL3 already drives over USB is ignored, so nothing is doubled. A generic
 controller with no SDL mapping gets a default layout. "Forced" keeps the old USB-only behaviour.
 
+## Steam Native Hook-up ("Present controller as" -> Steam Native Hook-up)
+
+The bridge hands Steam the REAL controller instead of re-presenting it. SDL3 identifies which USB interface
+is a game controller (anything SDL3's USB driver supports), lets go of it, and opens it raw; the bridge then
+sends DroidDeck the controller's real identity (vendor/product id, release, name, serial, interface, HID report
+descriptor read from the device) and every HID report, both ways. DroidDeck shows it as /dev/hidraw24..27
+with a kernel-like sysfs description, so Steam's own driver for that controller runs -- exactly like plugging
+it into a PC: a Flydigi Vader 4 Pro with its 4 back buttons, C/Z and gyro; a DualSense / Edge with touchpad,
+mute, paddles and Fn; a Switch Pro; an Xbox controller; and so on. Steam handles calibration, lights,
+haptics and gyro itself. Game rumble is handed to Steam through its virtual pad's force feedback, so Steam
+rumbles the controller with its own driver too. Up to 4 controllers at once, hot-plug supported.
+
+Limits: controllers that only reach Android through Bluetooth can't be handed over raw (Android doesn't give
+apps raw HID access to them); they keep working as DroidDeck's Steam Deck pad. Bridge-side settings (remaps,
+gyro tuning, lightbar) don't apply to hooked-up controllers -- configure them in Steam, like on a PC.
+
 ## Steam Controller (2026) over USB cable or wireless puck
 
 Plug a Steam Controller (2026) in with a cable (28de:1302), or plug in its wireless puck (28de:1304/1305), and

@@ -17,6 +17,11 @@ public final class NativeBridge {
         default void onTritonConnected(boolean connected, String what) { }
         /** Answer to a feature read DroidDeck forwarded (null = the controller did not answer). */
         default void onTritonFeature(long request, byte[] report) { }
+        /** Steam Native Hook-up: a controller was handed to Steam in [slot]; identity = HookupIdentity bundle. */
+        default void onHookupAdded(int slot, android.os.Bundle identity) { }
+        default void onHookupInput(int slot, byte[] report) { }
+        default void onHookupRemoved(int slot) { }
+        default void onHookupReply(int slot, long request, byte[] report) { }
     }
 
     /** Layout of the float[] frame sent from native code. */
@@ -111,6 +116,49 @@ public final class NativeBridge {
     static native void nativeTritonGetFeature(long request, int reportId);
     static native void nativeTritonRumble(int left, int right);
 
+    // ---------- Steam Native Hook-up (native/hookup.h) ----------
+    static volatile android.content.Context appContext;
+    static final android.os.Bundle[] hookupIdentity = new android.os.Bundle[MAX_PADS];
+
+    static void onHookupAdded(int slot, String path, int vid, int pid, int ifaceIndex) {
+        if (slot < 0 || slot >= MAX_PADS) return;
+        android.content.Context c = appContext;
+        android.os.Bundle id = c == null ? null : HookupIdentity.build(c, slot, path, vid, pid, ifaceIndex);
+        if (id == null) return;
+        hookupIdentity[slot] = id;
+        for (Listener l : listeners) l.onHookupAdded(slot, id);
+    }
+
+    static void onHookupInput(int slot, byte[] report) {
+        for (Listener l : listeners) l.onHookupInput(slot, report);
+    }
+
+    static void onHookupRemoved(int slot) {
+        if (slot < 0 || slot >= MAX_PADS) return;
+        hookupIdentity[slot] = null;
+        for (Listener l : listeners) l.onHookupRemoved(slot);
+    }
+
+    static void onHookupReply(int slot, long request, byte[] report) {
+        for (Listener l : listeners) l.onHookupReply(slot, request, report);
+    }
+
+    static void applyHookup() {
+        try { nativeSetHookup(Settings.isHookup() ? 1 : 0); } catch (UnsatisfiedLinkError e) { }
+    }
+
+    static void hookupOutput(int slot, int kind, byte[] report) {
+        try { nativeHookupOutput(slot, kind, report); } catch (UnsatisfiedLinkError e) { }
+    }
+
+    static void hookupGet(int slot, long request, int reportId, boolean input, int length) {
+        try { nativeHookupGet(slot, request, reportId, input, length); } catch (UnsatisfiedLinkError e) { }
+    }
+
+    static native void nativeSetHookup(int on);
+    static native void nativeHookupOutput(int slot, int kind, byte[] report);
+    static native void nativeHookupGet(int slot, long request, int reportId, boolean input, int length);
+
     /** Called from the native SDL thread. */
     static void onStatus(String s) {
         lastStatus = s;
@@ -165,6 +213,7 @@ public final class NativeBridge {
     static void applyDriver() {
         try {
             nativeSetDriver(Settings.driverEnabled ? 1 : 0);
+            nativeSetHookup(Settings.isHookup() ? 1 : 0);
             if (Settings.driverEnabled) nativeSetForce(Settings.forceUsb ? 1 : 0);
         } catch (UnsatisfiedLinkError e) { }
     }

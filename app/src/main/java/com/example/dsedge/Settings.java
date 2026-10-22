@@ -69,10 +69,14 @@ final class Settings {
     static volatile boolean driverEnabled = true;
     static volatile int presentAs = 0;
     static final String[] PRESENT_NAMES = { "Steam Deck (default)", "DualSense (native)", "DualSense Edge (native)", "DualShock 4 (native)",
-                                            "Steam Controller 2026 (native)", "Steam Controller 2015 (native)" };
+                                            "Steam Controller 2026 (native)", "Steam Controller 2015 (native)",
+                                            "Steam Native Hook-up (Steam sees the real controller)" };
     // DroidDeck pad types: 0 Deck, 4 DualSense, 5 DualSense Edge, 3 DualShock 4, 1 Steam Controller 2026 (28de:1302),
     // 6 Steam Controller 2015 (28de:1102)
-    static final int[] PRESENT_PAD_TYPE = { 0, 4, 5, 3, 1, 6 };
+    // Hook-up hands USB controllers to Steam as themselves; any controller it can't (Bluetooth) stays a Deck pad.
+    static final int[] PRESENT_PAD_TYPE = { 0, 4, 5, 3, 1, 6, 0 };
+    static final int PRESENT_HOOKUP = 6;
+    static boolean isHookup() { return presentAs == PRESENT_HOOKUP; }
     static final int PAD_TYPE_STEAM_2015 = 6;
     static boolean isSonyPadType(int t) { return t >= 3 && t <= 5; }
     static volatile int pollMs = 2;

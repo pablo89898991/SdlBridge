@@ -48,6 +48,14 @@ public class BridgeService extends Service implements NativeBridge.Listener {
     static final int MSG_TRITON_STATE = 13;    // "id": report id, "data": payload
     static final int MSG_TRITON_CONN = 14;     // "on": boolean, "what": description
     static final int MSG_TRITON_FEATURE = 15;  // "request": long, "data": reply (absent = no answer)
+    // Steam Native Hook-up. Client -> bridge:
+    static final int MSG_HOOKUP_OUT = 7;       // "slot", "kind" (0 output report, 1 feature write), "data"
+    static final int MSG_HOOKUP_GET = 8;       // "slot", "request", "id", "input", "length"
+    // Bridge -> client:
+    static final int MSG_HOOKUP_ADD = 20;      // HookupIdentity bundle
+    static final int MSG_HOOKUP_INPUT = 21;    // "slot", "data"
+    static final int MSG_HOOKUP_REMOVE = 22;   // "slot"
+    static final int MSG_HOOKUP_REPLY = 23;    // "slot", "request", "data" (absent = no answer)
 
     private static final float RAD_TO_DEG = 57.29578f;
     private static final float G = 9.80665f;
@@ -63,6 +71,7 @@ public class BridgeService extends Service implements NativeBridge.Listener {
                     if (m.replyTo != null) {
                         clients.add(m.replyTo); clientCount = clients.size(); sendStatus(m.replyTo, NativeBridge.lastStatus);
                         if (NativeBridge.tritonConnected) sendTritonConn(m.replyTo, true, NativeBridge.tritonWhat);
+                        for (Bundle id : NativeBridge.hookupIdentity) if (id != null) sendOne(m.replyTo, MSG_HOOKUP_ADD, id);
                     }
                     break;
                 case MSG_UNREGISTER:
@@ -78,6 +87,15 @@ public class BridgeService extends Service implements NativeBridge.Listener {
                 }
                 case MSG_TRITON_GET:
                     NativeBridge.tritonGetFeature(m.getData().getLong("request"), m.getData().getInt("id", 1));
+                    break;
+                case MSG_HOOKUP_OUT: {
+                    byte[] data = m.getData().getByteArray("data");
+                    if (data != null) NativeBridge.hookupOutput(m.getData().getInt("slot"), m.getData().getInt("kind"), data);
+                    break;
+                }
+                case MSG_HOOKUP_GET:
+                    NativeBridge.hookupGet(m.getData().getInt("slot"), m.getData().getLong("request"), m.getData().getInt("id"),
+                        m.getData().getBoolean("input"), m.getData().getInt("length", 64));
                     break;
                 case MSG_TRITON_RUMBLE:
                     NativeBridge.tritonRumble(m.getData().getInt("l"), m.getData().getInt("r"));
@@ -99,6 +117,7 @@ public class BridgeService extends Service implements NativeBridge.Listener {
     private volatile boolean connectedState;
 
     @Override public void onCreate() {
+        NativeBridge.appContext = getApplicationContext();
         super.onCreate();
         Settings.init(this);
         NativeBridge.listeners.add(this);
@@ -500,6 +519,39 @@ public class BridgeService extends Service implements NativeBridge.Listener {
             b.putBoolean("on", on);
             b.putString("what", what);
             Message m = Message.obtain(null, MSG_TRITON_CONN);
+            m.setData(b);
+            c.send(m);
+        } catch (RemoteException e) { clients.remove(c); clientCount = clients.size(); }
+    }
+
+    // ---------- Steam Native Hook-up -> clients ----------
+    @Override public void onHookupAdded(int slot, Bundle identity) { sendAll(MSG_HOOKUP_ADD, identity); }
+
+    @Override public void onHookupInput(int slot, byte[] report) {
+        if (clients.isEmpty() || report == null) return;
+        Bundle b = new Bundle();
+        b.putInt("slot", slot);
+        b.putByteArray("data", report);
+        sendAll(MSG_HOOKUP_INPUT, b);
+    }
+
+    @Override public void onHookupRemoved(int slot) {
+        Bundle b = new Bundle();
+        b.putInt("slot", slot);
+        sendAll(MSG_HOOKUP_REMOVE, b);
+    }
+
+    @Override public void onHookupReply(int slot, long request, byte[] report) {
+        Bundle b = new Bundle();
+        b.putInt("slot", slot);
+        b.putLong("request", request);
+        if (report != null) b.putByteArray("data", report);
+        sendAll(MSG_HOOKUP_REPLY, b);
+    }
+
+    private void sendOne(Messenger c, int what, Bundle b) {
+        try {
+            Message m = Message.obtain(null, what);
             m.setData(b);
             c.send(m);
         } catch (RemoteException e) { clients.remove(c); clientCount = clients.size(); }

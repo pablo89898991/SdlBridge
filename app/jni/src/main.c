@@ -125,6 +125,7 @@ static void send_info(JNIEnv *env, int slot, int vid, int pid, const char *name)
 }
 
 #include "triton.h"
+#include "hookup.h"
 
 /* SDL button -> bit in the frame mask. Bit layout is shared with the first bridge and DroidDeck's client. */
 static const struct { SDL_GamepadButton button; int bit; } BUTTONS[] = {
@@ -323,6 +324,14 @@ static void refresh_status(JNIEnv *env)
         snprintf(tail, sizeof(tail), " | players:%d%s", pad_count(),
                  triton_active() ? " | + Steam Controller (2026) raw passthrough" : "");
         SDL_strlcat(diag, tail, sizeof(diag));
+        if (hookup_active()) {
+            snprintf(tail, sizeof(tail), " | + %d controller(s) handed to Steam natively", hookup_count());
+            SDL_strlcat(diag, tail, sizeof(diag));
+        }
+    } else if (hookup_active()) {
+        snprintf(diag, sizeof(diag), "Connected: Steam Native Hook-up | %d controller(s) handed to Steam as the real "
+                 "device (Steam's own driver: all buttons, touchpads, gyro, rumble, lights)%s", hookup_count(),
+                 triton_active() ? " | + Steam Controller (2026) raw passthrough" : "");
     } else if (triton_active()) {
         snprintf(diag, sizeof(diag), "Connected: %s | raw passthrough to DroidDeck (all sensors, capacitive "
                  "touch, grip sense, trackpad pressure and haptics handled by Steam)", tri_kind(&g_tri[g_tri_active]));
@@ -445,6 +454,20 @@ static void drop_unusable(JNIEnv *env)
     }
 }
 
+/* Close every bridge player and restart SDL's gamepad layer (re-enumerates; ignore hints take effect).
+ * Raw handles (Steam Controller passthrough, Steam Native Hook-up) survive: main() holds an SDL_hid_init
+ * reference so the HID layer itself stays up. */
+static void restart_gamepads(JNIEnv *env)
+{
+    for (int s = 0; s < MAX_PADS; s++) {
+        if (g_pads[s]) { SDL_CloseGamepad(g_pads[s]); g_pads[s] = NULL; send_gone(env, s); }
+        rumble_on[s] = 0;
+    }
+    SDL_QuitSubSystem(SDL_INIT_GAMEPAD);
+    SDL_InitSubSystem(SDL_INIT_GAMEPAD);
+    g_last_diag[0] = 0;
+}
+
 /* SDL only reports a joystick as a gamepad when it has a mapping. SDL ships mappings for thousands of
  * controllers and Android generates one for every Android gamepad, but a rare generic one (arcade stick,
  * cheap USB pad) may have none -- give it a sensible default layout so it still works as a player. */
@@ -512,6 +535,7 @@ int main(int argc, char *argv[])
         send_status(env, msg);
         return 1;
     }
+    SDL_hid_init();   /* keeps the HID layer alive across gamepad-layer restarts (raw passthrough handles) */
     send_status(env, "Waiting for a controller (plug it in via USB-C)");
 
     jfloatArray arr = (*env)->NewFloatArray(env, FRAME_LEN);
@@ -538,14 +562,8 @@ int main(int argc, char *argv[])
         Uint64 now = SDL_GetTicks();
 
         if (atomic_exchange(&g_rescan, 0)) { /* restart SDL's gamepad/HIDAPI enumeration */
-            for (int s = 0; s < MAX_PADS; s++) {
-                if (g_pads[s]) { SDL_CloseGamepad(g_pads[s]); g_pads[s] = NULL; send_gone(env, s); }
-                rumble_on[s] = 0;
-            }
             tri_close_all(env, "rescan");
-            SDL_QuitSubSystem(SDL_INIT_GAMEPAD);
-            SDL_InitSubSystem(SDL_INIT_GAMEPAD);
-            g_last_diag[0] = 0;
+            restart_gamepads(env);
             send_status(env, "Rescanning controllers...");
         }
 
@@ -562,6 +580,7 @@ int main(int argc, char *argv[])
         }
 
         triton_poll(env, now, atomic_load(&g_driver_off) != 0);
+        hookup_poll(env, now, atomic_load(&g_driver_off) != 0);
 
         if (pad_count() > 0) SDL_UpdateGamepads();
 

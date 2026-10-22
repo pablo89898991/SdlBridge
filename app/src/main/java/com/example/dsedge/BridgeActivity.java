@@ -70,6 +70,7 @@ public class BridgeActivity extends SDLActivity implements NativeBridge.Listener
     private int dp(int v) { return (int) TypedValue.applyDimension(TypedValue.COMPLEX_UNIT_DIP, v, getResources().getDisplayMetrics()); }
 
     @Override protected void onCreate(Bundle state) {
+        NativeBridge.appContext = getApplicationContext();
         super.onCreate(state);
         Settings.init(this);
         UpdateChecker.BuildInfo info = UpdateChecker.readBuildInfo(this);
@@ -183,9 +184,12 @@ public class BridgeActivity extends SDLActivity implements NativeBridge.Listener
         addSpinner(mode, "Present controller as", Settings.PRESENT_NAMES, Settings.presentAs, v -> {
             Settings.presentAs = v;
             Settings.save();
+            NativeBridge.applyHookup();
         });
         mode.addView(sub("Steam Deck: the controller is DroidDeck's Deck pad (default, full features). "
                 + "DualSense / DualShock 4: Steam sees a NATIVE Sony controller (hidraw) with gyro, touchpad and back buttons. "
+                + "Steam Native Hook-up: every USB controller is handed to Steam as itself (its real name and ids), "
+                + "so Steam's own driver gives it all its features, like on a PC; Bluetooth controllers stay a Deck pad. "
                 + "Give Steam a few seconds, or restart the session, after changing.", 11f));
         addSpinner(mode, "Poll rate", Settings.RATE_NAMES, rateIndex(), v -> {
             Settings.pollMs = Settings.RATE_MS[v];
