@@ -361,7 +361,8 @@ public class BridgeService extends Service implements NativeBridge.Listener {
         // Sony family only (DualShock 4 = 3, DualSense = 4, DualSense Edge = 5): their report has ONE
         // full-width multitouch pad and remaps the IMU axes (X, Z, -Y) vs the Deck IMU. The Steam Deck (0)
         // and Steam Controller (1) have two trackpads and use the Deck IMU convention, so they are left as-is.
-        boolean sony = Settings.PRESENT_PAD_TYPE[Settings.presentAs] >= 3;
+        int presentType = Settings.PRESENT_PAD_TYPE[Settings.presentAs];
+        boolean sony = Settings.isSonyPadType(presentType);
         if (sony) {
             float tg = go[1]; go[1] = -go[2]; go[2] = tg;
             float ta = ao[1]; ao[1] = -ao[2]; ao[2] = ta;
@@ -382,6 +383,8 @@ public class BridgeService extends Service implements NativeBridge.Listener {
         // ... and the decoupled version: each half is its own trackpad with local -1..1 coordinates.
         float[] padL = new float[3], padR = new float[3];
         int mode = Settings.touchMode[slot];
+        // A 2015 Steam Controller has two real trackpads: always split the touchpad into left/right halves.
+        if (presentType == Settings.PAD_TYPE_STEAM_2015 && mode != Settings.TOUCH_OFF) mode = Settings.TOUCH_SPLIT;
         // A native Sony pad (DualShock 4, DualSense, DualSense Edge) has ONE full-width multitouch
         // surface, so ignore the Deck split there: keep SDL's finger slots (finger 0 is the primary
         // touch the game tracks) and map both across the whole pad. padL carries finger 0, padR finger 1.
