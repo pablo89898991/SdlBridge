@@ -294,11 +294,17 @@ public class BridgeService extends Service implements NativeBridge.Listener {
         }
     }
 
-    /** Double-tap action: Steam Native Hook-up on/off (needs the SDL3 driver, so it is switched on too). */
+    /**
+     * Double-tap action: Steam Native Hook-up on/off. Hook-up needs the SDL3 driver, so switching it on also
+     * switches the driver on; switching it off puts back what was there before -- including the driver being
+     * off (red bubble), so the controller goes back to Android / DroidDeck's own input instead of SDL3.
+     */
     private void toggleHookup() {
         boolean on = !Settings.isHookup();
+        boolean freeze = false;
         if (on) {
             Settings.lastPresentAs = Settings.presentAs;
+            Settings.driverBeforeHookup = Settings.driverEnabled;
             Settings.presentAs = Settings.PRESENT_HOOKUP;
             if (!Settings.driverEnabled) {
                 Settings.driverEnabled = true;
@@ -306,13 +312,21 @@ public class BridgeService extends Service implements NativeBridge.Listener {
             }
         } else {
             Settings.presentAs = Settings.lastPresentAs;
+            if (!Settings.driverBeforeHookup && Settings.driverEnabled) {
+                Settings.driverEnabled = false;
+                freeze = true;
+            }
         }
         Settings.save();
-        NativeBridge.applyDriver();   // also applies hook-up
+        NativeBridge.applyDriver();   // also applies hook-up (native code releases the hooked-up controllers)
+        if (freeze) {
+            try { BridgeActivity.setHidFrozen(true); } catch (Throwable ignored) { }
+        }
         updateBubble();
         try {
             android.widget.Toast.makeText(this, on
                 ? "Steam Native Hook-up ON: Steam gets the real USB controllers"
+                : !Settings.driverEnabled ? "Steam Native Hook-up OFF: SDL3 driver off again"
                 : "Steam Native Hook-up OFF: back to " + Settings.PRESENT_NAMES[Settings.presentAs],
                 android.widget.Toast.LENGTH_SHORT).show();
         } catch (RuntimeException ignored) { }

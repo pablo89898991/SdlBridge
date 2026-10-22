@@ -79,6 +79,8 @@ final class Settings {
     static boolean isHookup() { return presentAs == PRESENT_HOOKUP; }
     /** The "Present controller as" choice to go back to when hook-up is switched off from the bubble. */
     static volatile int lastPresentAs = 0;
+    /** Was the SDL3 driver on before the bubble switched hook-up on? Switching hook-up off goes back to it. */
+    static volatile boolean driverBeforeHookup = true;
     static final int PAD_TYPE_STEAM_2015 = 6;
     static boolean isSonyPadType(int t) { return t >= 3 && t <= 5; }
     static volatile int pollMs = 2;
@@ -123,6 +125,7 @@ final class Settings {
         presentAs = clamp(prefs.getInt("presentAs", 0), 0, PRESENT_NAMES.length - 1);
         lastPresentAs = clamp(prefs.getInt("lastPresentAs", 0), 0, PRESENT_NAMES.length - 1);
         if (lastPresentAs == PRESENT_HOOKUP) lastPresentAs = 0;
+        driverBeforeHookup = prefs.getBoolean("driverBeforeHookup", true);
         pollMs = clamp(prefs.getInt("pollMs", 2), 1, 16);
         bubble = prefs.getBoolean("bubble", false);
         bubbleX = prefs.getInt("bubbleX", 24);
@@ -149,6 +152,7 @@ final class Settings {
         e.putBoolean("driverEnabled", driverEnabled);
         e.putInt("presentAs", presentAs);
         e.putInt("lastPresentAs", lastPresentAs);
+        e.putBoolean("driverBeforeHookup", driverBeforeHookup);
         e.putInt("pollMs", pollMs);
         e.putBoolean("bubble", bubble).putInt("bubbleX", bubbleX).putInt("bubbleY", bubbleY);
         e.apply();
