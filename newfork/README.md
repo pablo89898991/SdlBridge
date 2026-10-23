@@ -60,6 +60,11 @@ The controller is handed to Steam as itself instead of being re-presented as ano
 - **Switching**: double-tap the floating bubble, or pick it in *Present controller as*. Switching it off returns
   to your previous mode and SDL3 driver state.
 
+**Latest wins, for every controller.** Steam's read of the controller is answered from a mailbox that always holds
+the newest report, so even when Steam reads late it gets the current state instead of old reports. Which bits are
+buttons is learned from the reports themselves (and from the controller's HID descriptor), so it needs no
+per-controller layout. No press or release is ever lost, however short.
+
 **Fast path.** Reports from the controller are written straight into the shared hook-up memory by a
 high-priority thread, about 250 µs after the USB layer receives them, and Steam's reader is woken with a futex.
 There is no Java hop and no message per report. Steam's output reports (rumble, lights, settings) and feature

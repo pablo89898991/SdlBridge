@@ -242,15 +242,38 @@ within ~1 ms and keeps every button change.
 
 ## Latency meter (pad.log)
 
-Where a button press of a hooked-up controller spends its time, logged every 10 s while there are presses:
-- `latency: button press -> Steam's virtual pad: N presses, avg X ms, max Y ms` (Steam process): from the report
-  being handed to Steam to Steam writing the mapped gamepad button on its virtual pad -- Steam's own processing.
-  (Sony controllers: DualSense / Edge, DualShock 4.)
-- `latency: Steam's virtual pad -> game read: ...` (game process): from Steam writing it to the game reading it.
-- `hookup: /dev/hidraw24: ... the controller fell behind: waited X ms for room, dropped N output reports` when
-  Steam sent output reports faster than the controller took them; `hookup: report 0xNN read took X ms` for a slow
-  feature read (Steam waits for those).
-Mouse / keyboard output from Steam does not go through the virtual pad, so it is in neither number.
+Where a button press of a hooked-up controller spends its time, logged every 10 s while there are presses (plus the
+first 12 presses one by one). Sony controllers (DualSense / Edge, DualShock 4) are timed by their buttons; any other
+controller by the first state bit that turns on (see below):
+- `latency: button press waited for Steam to read it` -- from the report being handed to Steam until Steam read it
+  (mouse / keyboard mappings see this delay too).
+- `latency: Steam read a button press -> on Steam's virtual pad (Steam's own processing)` -- gamepad mappings only.
+- `latency: Steam's virtual pad -> game read` (game process).
+- `hookup: /dev/hidraw24: N reports/s from the controller, M/s given to Steam; Steam read them after avg X ms ...`
+  when Steam was slow to read.
+- `hookup: ... the controller fell behind` (Steam's output reports waited for room) and `hookup: report 0xNN read took
+  X ms` (a slow feature read).
+
+## Latest wins when Steam reads (every controller)
+
+A hooked-up controller's reports wait in a mailbox, and Steam's read() of `/dev/hidraw24..27` is answered from it:
+whenever Steam reads, it gets the NEWEST report, even when it reads late. (The node's socket only carries a 1-byte
+"something to read" token, so poll()/epoll work as on a real node.) Before, reports went into a small socket queue:
+when Steam read slowly it filled up, the newest reports were the ones dropped and Steam read old ones -- a press
+reached it one or more of its read cycles late, and short presses could be lost.
+
+No press or release is ever lost: a waiting report is only replaced when that loses nothing -- not when a
+button-like bit changed and changed back before Steam read it (a press shorter than Steam's read cycle); then both
+reach Steam in order. This works for any controller without knowing its layout: DroidDeck learns from the reports
+which bits are "moving" (sticks, gyro, accelerometer, touch, noise: they change in more than a quarter of reports,
+no button is pressed that fast) and which bytes are counters / timestamps, and treats the carry of an analog value
+crossing a boundary as analog too; buttons the controller's HID descriptor declares are always protected. Only
+report kinds that stream (256 reports within 5 s) are ever replaced, so replies to Steam's commands always arrive
+one by one. Until the first 256 reports are seen nothing is replaced.
+
+Simulated with a Steam that reads only every 15-45 ms, press to Steam: 1000 Hz controller avg 38 -> 15 ms (max 72 ->
+39), 250 Hz avg 28 -> 15 ms; 15 ms taps: 30 of 44 reached Steam before, all now. When Steam reads in time nothing
+changes (0.2 ms).
 
 ## SDL3Bridge tab in DroidDeck's Settings
 

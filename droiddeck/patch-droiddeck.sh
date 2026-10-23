@@ -953,7 +953,8 @@ rep('#include <vector>\n', '#include <vector>\n#include <deque>\n')
 rep('  bool sc1 = false;  // sdl3bridge: Steam Controller (2015)\n};',
     '  bool sc1 = false;  // sdl3bridge: Steam Controller (2015)\n'
     '  int8_t hookup = -1;  // sdl3bridge: Steam Native Hook-up slot\n'
-    '  uint32_t hookup_generation = 0;\n};')
+    '  uint32_t hookup_generation = 0;\n'
+    '  std::shared_ptr<struct HookupQueue> hookup_in;  // sdl3bridge: reports waiting for Steam (mailbox)\n};')
 # UinputWriter: force-feedback requests queued for Steam
 rep('  uint32_t buttons = 0;\n  int16_t axes[8] = {};\n};',
     '  uint32_t buttons = 0;\n  int16_t axes[8] = {};\n'
