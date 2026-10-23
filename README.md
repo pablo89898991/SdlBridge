@@ -38,7 +38,8 @@ from the run's Artifacts, or from the repo's Releases.
 ## Known limits
 - USB only for full features; classic Bluetooth DualSense raw features are not available to Android apps.
 - Adaptive trigger effects are not implemented; rumble and lightbar are.
-- The bridge screen must be opened once per phone boot; it cannot launch itself from the background.
+- Controllers that reach the phone only through Android's input (Bluetooth, read by Android rather than SDL3's USB
+  driver) can be read only while the bridge screen is in front; USB controllers work in the background.
 - Untested: written without being able to build or run it. Report the first error.
 
 ## Forced SDL3 USB driver
@@ -252,3 +253,13 @@ answers with everything, including the choice lists (MSG_SETTINGS 42), and appli
 screen does. The patcher adds the tab only if DroidDeck's settings widgets still have the signatures it was written
 against, so an upstream redesign leaves the tab out instead of breaking the build. (If the bridge's own screen is
 open while you change things in DroidDeck, it shows the new values after it is reopened.)
+
+## Runs silently in the background (status bar icon)
+
+SDL3 runs inside the bridge's background service (SdlEngine), not inside a screen: when DroidDeck connects, a
+controller is plugged in, or the app is opened, the service starts SDL3's loop and nothing comes to the front.
+The bridge shows a status bar icon (a controller) with its current status; tapping it opens the bridge screen,
+which is now only the test screen and settings and can be opened and closed at any time. It keeps running until
+the app is force-stopped. Android 13+ asks once for notification permission (needed for the icon). If Android
+does not allow a foreground service at that moment, the icon is shown as a plain ongoing notification and
+DroidDeck's connection keeps the bridge alive.

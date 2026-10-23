@@ -30,13 +30,13 @@ import android.widget.SeekBar;
 import android.widget.Spinner;
 import android.widget.TextView;
 
-import org.libsdl.app.SDLActivity;
+import org.libsdl.app.SDLControllerManager;
 
 /**
- * Hosts SDL3 (which owns USB/HID controller access on Android), shows a live controller test screen and
- * settings, and keeps the controller claimed while another app (DroidDeck) is in front.
+ * The bridge's screen: live controller test and settings. SDL3 itself runs in the background service
+ * (SdlEngine), so this screen can open and close at any time without affecting the controllers.
  */
-public class BridgeActivity extends SDLActivity implements NativeBridge.Listener {
+public class BridgeActivity extends android.app.Activity implements NativeBridge.Listener {
     private interface IntSink { void set(int v); }
 
     private final Handler ui = new Handler(Looper.getMainLooper());
@@ -57,9 +57,6 @@ public class BridgeActivity extends SDLActivity implements NativeBridge.Listener
     private boolean pendingBubble;   // user asked for the bubble; waiting for overlay permission
     private TextView audioView;
 
-    @Override protected String[] getLibraries() {
-        return new String[] { "SDL3", "main" };
-    }
 
     // ---- design tokens ----
     private static final int BG = 0xFF0E1116, CARD = 0xFF171C24, CARD2 = 0xFF222A35,
@@ -69,16 +66,20 @@ public class BridgeActivity extends SDLActivity implements NativeBridge.Listener
 
     private int dp(int v) { return (int) TypedValue.applyDimension(TypedValue.COMPLEX_UNIT_DIP, v, getResources().getDisplayMetrics()); }
 
-    /** True while the bridge screen (and with it the SDL3 loop) is alive. */
+    /** True while the bridge screen is open. */
     static volatile boolean running;
-    /** Started by a controller being plugged in: keep running, but stay in the background. */
-    static final String EXTRA_BACKGROUND = "background";
 
     @Override protected void onCreate(Bundle state) {
         NativeBridge.appContext = getApplicationContext();
         running = true;
         super.onCreate(state);
         Settings.init(this);
+        SdlEngine.start(this);
+        // Android 13+: the status bar icon (the bridge's notification) needs this permission.
+        if (Build.VERSION.SDK_INT >= 33 && checkSelfPermission(android.Manifest.permission.POST_NOTIFICATIONS)
+                != android.content.pm.PackageManager.PERMISSION_GRANTED) {
+            requestPermissions(new String[] { android.Manifest.permission.POST_NOTIFICATIONS }, 1);
+        }
         UpdateChecker.BuildInfo info = UpdateChecker.readBuildInfo(this);
 
         LinearLayout root = new LinearLayout(this);
@@ -621,10 +622,6 @@ public class BridgeActivity extends SDLActivity implements NativeBridge.Listener
 
     @Override protected void onResume() {
         super.onResume();
-        if (getIntent() != null && getIntent().getBooleanExtra(EXTRA_BACKGROUND, false)) {
-            getIntent().removeExtra(EXTRA_BACKGROUND);
-            moveTaskToBack(true);   // started by a plugged-in controller: run, but don't take the screen
-        }
         if (android.provider.Settings.canDrawOverlays(this)) {
             if (pendingBubble) {
                 pendingBubble = false;
@@ -649,12 +646,43 @@ public class BridgeActivity extends SDLActivity implements NativeBridge.Listener
 
     private void keepControllerClaimed() {
         // When the driver is off, let go of the controller (freeze = release the USB interface) so Android can use it.
-        if (mHIDDeviceManager != null) mHIDDeviceManager.setFrozen(!Settings.driverEnabled);
+        SdlEngine.setHidFrozen(!Settings.driverEnabled);
     }
 
-    /** Called from the service when the bubble toggles the driver: release or re-claim the USB interface. */
+    /** Release or re-claim the USB interface (the driver was switched off / on). */
     static void setHidFrozen(boolean frozen) {
-        if (mHIDDeviceManager != null) mHIDDeviceManager.setFrozen(frozen);
+        SdlEngine.setHidFrozen(frozen);
+    }
+
+    // Controllers that reach the phone through Android's input (Bluetooth) deliver their buttons and sticks to the
+    // focused window: while this screen is in front, hand them to SDL like SDL's own activity did.
+    private static boolean fromGamepad(int source) {
+        return (source & android.view.InputDevice.SOURCE_GAMEPAD) == android.view.InputDevice.SOURCE_GAMEPAD
+            || (source & android.view.InputDevice.SOURCE_JOYSTICK) == android.view.InputDevice.SOURCE_JOYSTICK
+            || (source & android.view.InputDevice.SOURCE_DPAD) == android.view.InputDevice.SOURCE_DPAD;
+    }
+
+    @Override public boolean dispatchKeyEvent(android.view.KeyEvent e) {
+        if (SdlEngine.isRunning() && fromGamepad(e.getSource())) {
+            try {
+                if (SDLControllerManager.isDeviceSDLJoystick(e.getDeviceId())) {
+                    if (e.getAction() == android.view.KeyEvent.ACTION_DOWN
+                            && SDLControllerManager.onNativePadDown(e.getDeviceId(), e.getKeyCode(), e.getScanCode())) return true;
+                    if (e.getAction() == android.view.KeyEvent.ACTION_UP
+                            && SDLControllerManager.onNativePadUp(e.getDeviceId(), e.getKeyCode(), e.getScanCode())) return true;
+                }
+            } catch (UnsatisfiedLinkError | RuntimeException ignored) { }
+        }
+        return super.dispatchKeyEvent(e);
+    }
+
+    @Override public boolean dispatchGenericMotionEvent(android.view.MotionEvent e) {
+        if (SdlEngine.isRunning() && (e.getSource() & android.view.InputDevice.SOURCE_JOYSTICK) == android.view.InputDevice.SOURCE_JOYSTICK) {
+            try {
+                if (SDLControllerManager.handleJoystickMotionEvent(e)) return true;
+            } catch (UnsatisfiedLinkError | RuntimeException ignored) { }
+        }
+        return super.dispatchGenericMotionEvent(e);
     }
 
     // ---------- NativeBridge.Listener ----------

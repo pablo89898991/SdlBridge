@@ -180,26 +180,90 @@ public class BridgeService extends Service implements NativeBridge.Listener {
         super.onCreate();
         Settings.init(this);
         NativeBridge.listeners.add(this);
+        // SDL3 runs here, in the background: nothing has to open when DroidDeck (or a plugged-in controller)
+        // starts the bridge. The notification is the bridge's icon in the status bar.
+        SdlEngine.start(this);
+        try {
+            startForegroundService(new Intent(this, BridgeService.class));   // -> onStartCommand: startForeground
+        } catch (RuntimeException e) {
+            // Android may refuse a foreground start while the app is in the background: show the same
+            // notification as a plain ongoing one; DroidDeck's connection keeps the bridge alive meanwhile.
+            postNotification(false);
+        }
     }
+
+    // ---------- status bar notification ----------
+    private static final int NOTE_ID = 1;
+    private String noteText = "";
+    private long noteMs;
+
+    private Notification buildNotification() {
+        NotificationManager nm = getSystemService(NotificationManager.class);
+        nm.createNotificationChannel(new NotificationChannel("bridge", "Controller bridge", NotificationManager.IMPORTANCE_LOW));
+        android.app.PendingIntent open = android.app.PendingIntent.getActivity(this, 0,
+            new Intent(this, BridgeActivity.class).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK),
+            android.app.PendingIntent.FLAG_IMMUTABLE | android.app.PendingIntent.FLAG_UPDATE_CURRENT);
+        String text = SdlEngine.error != null ? SdlEngine.error : NativeBridge.lastStatus;
+        return new Notification.Builder(this, "bridge")
+            .setContentTitle(Settings.isHookup() ? "SDL3Bridge · Steam Native Hook-up" : "SDL3Bridge")
+            .setContentText(text)
+            .setStyle(new Notification.BigTextStyle().bigText(text))
+            .setSmallIcon(R.drawable.ic_stat_bridge)
+            .setColor(0xFF4FC3F7)
+            .setContentIntent(open)
+            .setOngoing(true)
+            .setShowWhen(false)
+            .setOnlyAlertOnce(true)
+            .build();
+    }
+
+    /** foreground: as the foreground service's notification; else a plain ongoing notification. */
+    private boolean postNotification(boolean foreground) {
+        try {
+            Notification n = buildNotification();
+            if (foreground) {
+                if (Build.VERSION.SDK_INT >= 34) startForeground(NOTE_ID, n, ServiceInfo.FOREGROUND_SERVICE_TYPE_SPECIAL_USE);
+                else startForeground(NOTE_ID, n);
+            } else {
+                getSystemService(NotificationManager.class).notify(NOTE_ID, n);
+            }
+            return true;
+        } catch (RuntimeException e) {
+            android.util.Log.w("SDL3Bridge", "notification: " + e);
+            return false;
+        }
+    }
+
+    /** Status changed: refresh the notification text (at most every 2 s). */
+    private void refreshNotification(String status) {
+        if (status == null || status.equals(noteText)) return;
+        long now = SystemClock.uptimeMillis();
+        if (now - noteMs < 2000) {
+            main.removeCallbacks(noteRefresh);
+            main.postDelayed(noteRefresh, 2000 - (now - noteMs));
+            return;
+        }
+        noteText = status;
+        noteMs = now;
+        try { getSystemService(NotificationManager.class).notify(NOTE_ID, buildNotification()); } catch (RuntimeException ignored) { }
+    }
+    private final Runnable noteRefresh = () -> refreshNotification(NativeBridge.lastStatus);
 
     @Override public IBinder onBind(Intent i) { return messenger.getBinder(); }
 
     @Override public int onStartCommand(Intent i, int flags, int startId) {
-        try {
-            NotificationManager nm = getSystemService(NotificationManager.class);
-            nm.createNotificationChannel(new NotificationChannel("bridge", "Controller bridge", NotificationManager.IMPORTANCE_LOW));
-            Notification n = new Notification.Builder(this, "bridge")
-                    .setContentTitle("SDL3 controller bridge running")
-                    .setSmallIcon(android.R.drawable.stat_sys_data_bluetooth).build();
-            if (Build.VERSION.SDK_INT >= 34) startForeground(1, n, ServiceInfo.FOREGROUND_SERVICE_TYPE_SPECIAL_USE);
-            else startForeground(1, n);
-        } catch (RuntimeException e) {
-            // Without a foreground notification the bridge may be stopped in the background; keep running anyway.
-        }
+        SdlEngine.start(this);
         if (i != null && "BUBBLE".equals(i.getAction())) {
             if (i.getBooleanExtra("on", false)) showBubble(); else hideBubble();
         } else if (Settings.bubble) {
             showBubble();
+        }
+        if (!postNotification(true)) {
+            // Android refused the foreground notification: a started foreground service that never shows it
+            // would be stopped with an error, so stop being "started" (DroidDeck's connection keeps the
+            // bridge alive) and show the icon as a plain ongoing notification instead.
+            postNotification(false);
+            stopSelf(startId);
         }
         return START_NOT_STICKY;
     }
@@ -329,7 +393,7 @@ public class BridgeService extends Service implements NativeBridge.Listener {
             Settings.presentAs = Settings.PRESENT_HOOKUP;
             if (!Settings.driverEnabled) {
                 Settings.driverEnabled = true;
-                try { BridgeActivity.setHidFrozen(false); } catch (Throwable ignored) { }
+                try { SdlEngine.setHidFrozen(false); } catch (Throwable ignored) { }
             }
         } else {
             Settings.presentAs = Settings.lastPresentAs;
@@ -341,7 +405,7 @@ public class BridgeService extends Service implements NativeBridge.Listener {
         Settings.save();
         NativeBridge.applyDriver();   // also applies hook-up (native code releases the hooked-up controllers)
         if (freeze) {
-            try { BridgeActivity.setHidFrozen(true); } catch (Throwable ignored) { }
+            try { SdlEngine.setHidFrozen(true); } catch (Throwable ignored) { }
         }
         updateBubble();
         try {
@@ -364,7 +428,7 @@ public class BridgeService extends Service implements NativeBridge.Listener {
         Settings.driverEnabled = !Settings.driverEnabled;
         Settings.save();
         NativeBridge.applyDriver();
-        try { BridgeActivity.setHidFrozen(!Settings.driverEnabled); } catch (Throwable ignored) { }
+        try { SdlEngine.setHidFrozen(!Settings.driverEnabled); } catch (Throwable ignored) { }
         updateBubble();
     }
 
@@ -677,17 +741,9 @@ public class BridgeService extends Service implements NativeBridge.Listener {
     }
 
     /** The SDL3 loop runs in the bridge screen; if Android closed it, start it again in the background. */
-    private long lastLoopStart;
+    /** SDL3's loop must run for controllers to work: it runs in this service, no screen needed. */
     private void ensureBridgeLoop() {
-        if (BridgeActivity.running) return;
-        long now = SystemClock.elapsedRealtime();
-        if (now - lastLoopStart < 10_000) return;
-        lastLoopStart = now;
-        try {
-            startActivity(new Intent(this, BridgeActivity.class)
-                .putExtra(BridgeActivity.EXTRA_BACKGROUND, true)
-                .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_NO_ANIMATION));
-        } catch (RuntimeException ignored) { }
+        SdlEngine.start(this);
     }
 
     // ---------- Steam Native Hook-up -> clients ----------
@@ -752,6 +808,8 @@ public class BridgeService extends Service implements NativeBridge.Listener {
         b.putInt("v", 1);
         b.putString("status", NativeBridge.lastStatus);
         b.putBoolean("overlayAllowed", android.provider.Settings.canDrawOverlays(this));
+        b.putBoolean("notifications", getSystemService(NotificationManager.class).areNotificationsEnabled());
+        b.putString("engineError", SdlEngine.error == null ? "" : SdlEngine.error);
         b.putBoolean("fastPath", NativeBridge.hookupShmInode() != 0);
         b.putString("triton", NativeBridge.tritonConnected ? NativeBridge.tritonWhat : "");
         String[] padNames = new String[NativeBridge.MAX_PADS], padIds = new String[NativeBridge.MAX_PADS];
@@ -901,6 +959,7 @@ public class BridgeService extends Service implements NativeBridge.Listener {
     @Override public void onStatus(String s) {
         connectedState = s != null && s.startsWith("Connected");
         updateBubble();
+        main.post(() -> refreshNotification(s));
         for (Messenger c : clients) sendStatus(c, s);
     }
 
