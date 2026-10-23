@@ -252,6 +252,11 @@ are timed directly; for the rest, a learned button-like bit that turns on counts
 - `hookup: /dev/hidraw24: N reports/s, Steam read M/s (all waiting each time | the newest each time), avg X ms after
   they arrived ...` (`deck: Steam Deck pad: ...` for DroidDeck's own pads) when Steam was slow to read, and which
   way Steam reads (`Steam takes every report waiting each time` / `Steam reads one report at a time`).
+- `mouse: ...` -- Steam Input's mouse / keyboard output, step by step: Steam sending an XTest button or key
+  (`sent XTest mouse button 1 press to X display :0`), the X server handing it to gamescope (`X server handed
+  mouse button 0x110 press to gamescope (libei)`), gamescope receiving it (`gamescope received mouse button ...`).
+  A click that never reaches a game shows the step where it stops. Buttons are logged one by one at first, then
+  every 100th; keys a few times to compare.
 - `hookup: ... the controller fell behind` (Steam's output reports waited for room) and `hookup: report 0xNN read took
   X ms` (a slow feature read).
 
@@ -289,6 +294,13 @@ Simulated with a Steam that comes back only every 15-45 ms, press to Steam (15 m
 | Hooked-up controller (generic and Sony), Steam takes all | avg 28-38 ms (first mailbox: 14-17 ms, 50 reports/s) | avg 14-16 ms, 225-270 reports/s |
 | Hooked-up controller, Steam takes one at a time | (first mailbox: avg 25-35 ms, max 320-460) | avg 15 ms, max 42 |
 | Steam reading in time | 2.2 ms | 1.8 ms (unchanged) |
+
+## Controller-driven mouse works out of the box
+
+DroidDeck's Performance page has "Draw the cursor inside gamescope" (Session fixes), which upstream leaves off to
+save a compositor plane. With it off, Steam Input's mouse output from a controller is incomplete: a button bound to
+a mouse click does nothing (keyboard bindings and mouse movement still work). SDL3Deck starts it ON; the switch is
+still there to turn it off.
 
 ## Steam's controller threads at higher priority
 
