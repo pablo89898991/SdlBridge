@@ -496,12 +496,13 @@ public class BridgeActivity extends android.app.Activity implements NativeBridge
             StringBuilder sb = new StringBuilder("USB: ");
             boolean any = false;
             for (UsbDevice d : um.getDeviceList().values()) {
-                if (d.getVendorId() != 0x054C) continue;
+                if (!looksLikeController(d)) continue;
                 any = true;
-                sb.append(String.format(java.util.Locale.ROOT, "Sony %04x:%04x access=%s  ",
+                String name = d.getProductName() != null ? d.getProductName() : "controller";
+                sb.append(String.format(java.util.Locale.ROOT, "%s %04x:%04x access=%s  ", name,
                         d.getVendorId(), d.getProductId(), um.hasPermission(d) ? "yes" : "NO (unplug and replug, tap OK)"));
             }
-            if (!any) sb.append("no Sony controller on USB (use a USB-C data cable)");
+            if (!any) sb.append("no controller on USB (use a USB-C data cable)");
             return sb.toString();
         } catch (RuntimeException e) {
             return "USB: unavailable";
@@ -611,8 +612,8 @@ public class BridgeActivity extends android.app.Activity implements NativeBridge
         ui.postDelayed(NativeBridge::rescan, asked > 0 ? 4000 : 300);
     }
 
+    /** Any USB device with a HID or vendor-specific interface (SDL3 decides whether it really is a controller). */
     private static boolean looksLikeController(UsbDevice d) {
-        if (d.getVendorId() == 0x054C) return true; // Sony
         for (int n = 0; n < d.getInterfaceCount(); n++) {
             UsbInterface f = d.getInterface(n);
             int c = f.getInterfaceClass();

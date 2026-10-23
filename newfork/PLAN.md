@@ -2,6 +2,9 @@
 
 Things agreed for the new repo, kept here so they are not forgotten:
 
+0. **Every controller.** Whatever is fixed or added must work for all SDL3-supported controllers, never one
+   vendor only (see `CLAUDE.md`). Copy `CLAUDE.md` into the new repo too.
+
 1. **README on the main page.** `newfork/README.md` goes to the ROOT of the new repo's default branch (`main`) as
    `README.md` -- that is what GitHub shows on the repo's main page. The daily sync never touches `main` (it only
    writes the build branch), so it stays.
