@@ -216,6 +216,20 @@ public final class NativeBridge {
     }
 
     static native void nativeSetHookup(int on);
+    static native int nativeHookupMapShm(int fd);
+    static native long nativeHookupShmInode();
+
+    /** DroidDeck's shared hook-up file (fast path: reports written straight into it). Takes ownership of pfd. */
+    static void hookupMapShm(android.os.ParcelFileDescriptor pfd) {
+        if (pfd == null) return;
+        try { nativeHookupMapShm(pfd.detachFd()); }
+        catch (UnsatisfiedLinkError e) { try { pfd.close(); } catch (java.io.IOException ignored) { } }
+    }
+
+    /** Inode of the mapped (still live) shared file, 0 if none. */
+    static long hookupShmInode() {
+        try { return nativeHookupShmInode(); } catch (UnsatisfiedLinkError e) { return 0; }
+    }
     static native void nativeHookupOutput(int slot, int kind, byte[] report);
     static native void nativeHookupGet(int slot, long request, int reportId, boolean input, int length);
 

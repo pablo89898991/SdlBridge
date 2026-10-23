@@ -58,7 +58,8 @@ public class BridgeService extends Service implements NativeBridge.Listener {
     static final int MSG_HOOKUP_REPLY = 23;    // "slot", "request", "data" (absent = no answer)
     static final int MSG_BRIDGE_LOG = 30;      // "text": one or more log lines (newline separated)
     static final int MSG_HOOKUP_SYNC = 9;      // client watchdog: resend what is handed over (re-registers if needed)
-    static final int MSG_HOOKUP_STATE = 24;    // "slots": int[] of live hook-up slots
+    static final int MSG_HOOKUP_STATE = 24;    // "slots": int[] of live hook-up slots; "fast_ino": mapped shared file
+    static final int MSG_HOOKUP_SHM = 25;      // <- DroidDeck: "fd": its shared hook-up file (fast path)
 
     private static final float RAD_TO_DEG = 57.29578f;
     private static final float G = 9.80665f;
@@ -123,10 +124,19 @@ public class BridgeService extends Service implements NativeBridge.Listener {
                         NativeBridge.retryUndescribed();
                         Bundle st = new Bundle();
                         st.putIntArray("slots", java.util.Arrays.copyOf(live, n));
+                        st.putLong("fast_ino", NativeBridge.hookupShmInode());
                         sendOne(m.replyTo, MSG_HOOKUP_STATE, st);
                     }
                     ensureBridgeLoop();
                     break;
+                case MSG_HOOKUP_SHM: {
+                    Bundle d = m.getData();
+                    if (d != null) d.setClassLoader(android.os.ParcelFileDescriptor.class.getClassLoader());
+                    @SuppressWarnings("deprecation")
+                    android.os.ParcelFileDescriptor pfd = d == null ? null : d.getParcelable("fd");
+                    NativeBridge.hookupMapShm(pfd);
+                    break;
+                }
                 case MSG_HOOKUP_GET:
                     NativeBridge.hookupGet(m.getData().getInt("slot"), m.getData().getLong("request"), m.getData().getInt("id"),
                         m.getData().getBoolean("input"), m.getData().getInt("length", 64));

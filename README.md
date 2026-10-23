@@ -171,6 +171,14 @@ DroidDeck it appears as DroidDeck's own Steam Controller (the same node its Blue
 the regular pad; it is never a bridge player and the "Present controller as" setting does not apply to it.
 One Steam Controller is passed through at a time.
 
+**With Steam Native Hook-up on**, the Steam Controller (2026) is handed to Steam as itself instead -- the real
+28de:1302 (cable) or 28de:1304/1305 (puck) interface with its real report descriptor, through the hook-up fast
+path, exactly like on a PC. Android doesn't say which interface is the controller, so the bridge watches the
+candidates and hands over only the one that sends controller data (or where the puck reports a connected
+controller): one hook-up slot per actual controller, and the boot keyboard/mouse (lizard mode) interfaces are
+left to Android. Switching hook-up off gives it back to the passthrough above (only after hook-up has released
+it, so the two never hold the same interface).
+
 
 ## Performance (gyro / trackpad latency)
 
@@ -192,3 +200,19 @@ Per player, each of 8 targets — L4, R4, L5, R5, and left/right trackpad click 
 ANY controller button, including extra buttons SDL exposes as MISC2..6 (e.g. a Flydigi Vader's C and Z).
 The bridge now carries those extra buttons in a second mask. Example: 4 back buttons as L4/R4/L5/R5, and
 C/Z as left/right trackpad click — giving Steam-Input parity across SDL3 controllers.
+
+## Hook-up fast path (low latency)
+
+With a DroidDeck build from this fork, Steam Native Hook-up skips every hop it can:
+- DroidDeck hands the bridge its shared hook-up file once (as a file descriptor over the existing connection).
+- A dedicated high-priority thread in the bridge picks up each controller report within ~250 us of SDL's USB
+  thread receiving it and writes it straight into Steam's FIFO in that file, waking Steam's reader with a futex
+  (before: once per main-loop pass, then Java, a Binder message per report, DroidDeck's app, and Steam's side
+  checking every 500 us).
+- Steam's output reports (rumble, lights) and feature reads are served from the same file by the bridge.
+- DroidDeck still owns the controller list and its sysfs description; while the bridge serves a slot it keeps a
+  heartbeat in the file and DroidDeck leaves that slot alone. If the fast path is unavailable (older DroidDeck,
+  file not mappable), everything falls back to messages automatically.
+
+Measured in a test with the real DroidDeck code and hook (Binder hop not even counted for the old path):
+median 1.45 ms -> 0.29 ms, p90 2.3 ms -> 0.44 ms from report to Steam. The status line shows "fast path".

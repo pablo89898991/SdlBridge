@@ -326,12 +326,14 @@ static void refresh_status(JNIEnv *env)
                  triton_active() ? " | + Steam Controller (2026) raw passthrough" : "");
         SDL_strlcat(diag, tail, sizeof(diag));
         if (hookup_active()) {
-            snprintf(tail, sizeof(tail), " | + %d controller(s) handed to Steam natively", hookup_count());
+            snprintf(tail, sizeof(tail), " | + %d controller(s) handed to Steam natively%s", hookup_count(),
+                     hookup_fast_count() ? " (fast path)" : "");
             SDL_strlcat(diag, tail, sizeof(diag));
         }
     } else if (hookup_active()) {
         snprintf(diag, sizeof(diag), "Connected: Steam Native Hook-up | %d controller(s) handed to Steam as the real "
-                 "device (Steam's own driver: all buttons, touchpads, gyro, rumble, lights)%s", hookup_count(),
+                 "device (Steam's own driver: all buttons, touchpads, gyro, rumble, lights)%s%s", hookup_count(),
+                 hookup_fast_count() ? " | fast path: shared memory" : "",
                  triton_active() ? " | + Steam Controller (2026) raw passthrough" : "");
     } else if (triton_active()) {
         snprintf(diag, sizeof(diag), "Connected: %s | raw passthrough to DroidDeck (all sensors, capacitive "
@@ -580,7 +582,7 @@ int main(int argc, char *argv[])
             refresh_status(env);
         }
 
-        triton_poll(env, now, atomic_load(&g_driver_off) != 0);
+        triton_poll(env, now, atomic_load(&g_driver_off) ? "SDL3 driver off" : hookup_triton_off_why());
         hookup_poll(env, now, atomic_load(&g_driver_off) != 0);
 
         if (pad_count() > 0) SDL_UpdateGamepads();

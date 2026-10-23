@@ -12,6 +12,10 @@
  */
 #pragma once
 
+#include <pthread.h>
+#include <sys/resource.h>
+#include "hkshm.h"
+
 #define HOOKUP_SLOTS 4
 #define HOOKUP_REPORT_MAX 128
 
@@ -32,6 +36,18 @@ static int g_hk_type_count;
 static Uint64 g_hk_scan_ms;
 static Uint32 g_hk_changes = 0xffffffffu;
 static jmethodID g_hk_added, g_hk_input, g_hk_removed, g_hk_reply, g_hk_prefetch, g_hk_log;
+
+/* ---- fast path (hkshm.h): reports go straight into DroidDeck's shared file, read by a dedicated thread ----
+ * g_hk_io is held by the reader thread for each pass over the controllers, and by anyone who remaps the file
+ * or releases a controller, so neither disappears under the reader. */
+static HkShm g_hks = { NULL, -1, 0 };
+static pthread_mutex_t g_hk_io = PTHREAD_MUTEX_INITIALIZER;
+static _Atomic int g_hk_gone[HOOKUP_SLOTS];        /* reader saw the controller go away; SDL thread closes it */
+static _Atomic int g_hk_reader_started;
+static _Atomic int g_hk_fast_now[HOOKUP_SLOTS];    /* slot currently served through the shared file */
+static int g_hk_fast_logged[HOOKUP_SLOTS];          /* SDL thread: last fast/slow state logged per slot */
+static uint64_t g_hk_get_last[HOOKUP_SLOTS];        /* SDL thread: last feature read taken from the file */
+static Uint64 g_hk_alive_ms;
 
 /* Logged to logcat AND sent to DroidDeck, which writes it into the session's pad.log ("sdl3bridge: ..."). */
 static void hk_log(JNIEnv *env, const char *fmt, ...)
@@ -84,6 +100,37 @@ JNIEXPORT void JNICALL Java_com_example_dsedge_NativeBridge_nativeSetHookup(JNIE
 {
     (void)env; (void)c;
     atomic_store(&g_hookup_on, on ? 1 : 0);
+}
+
+/* DroidDeck handed over its shared hook-up file (any thread). Returns 0 when the fast path is on. */
+JNIEXPORT jint JNICALL Java_com_example_dsedge_NativeBridge_nativeHookupMapShm(JNIEnv *env, jclass c, jint fd)
+{
+    (void)c;
+    HkShm m = { NULL, -1, 0 };
+    int r = hks_map(&m, fd);
+    pthread_mutex_lock(&g_hk_io);
+    int same = r == 0 && g_hks.base && g_hks.ino == m.ino && hks_alive(&g_hks);
+    if (r == 0 && !same) {
+        hks_unmap(&g_hks);
+        g_hks = m;
+    }
+    pthread_mutex_unlock(&g_hk_io);
+    if (same) hks_unmap(&m);   /* already mapped: keep the old mapping */
+    if (r == 0 && !same)
+        hk_log(env, "hookup: fast path on: reports go straight into DroidDeck's shared memory (no messages, Steam woken at once)");
+    else if (r != 0)
+        hk_log(env, "hookup: fast path unavailable (shared file could not be mapped, %d); using messages", r);
+    return r;
+}
+
+/* Inode of the mapped live file (0: none) -- DroidDeck compares it with its own file to know if it must resend. */
+JNIEXPORT jlong JNICALL Java_com_example_dsedge_NativeBridge_nativeHookupShmInode(JNIEnv *env, jclass c)
+{
+    (void)env; (void)c;
+    pthread_mutex_lock(&g_hk_io);
+    jlong ino = hks_alive(&g_hks) ? (jlong)g_hks.ino : 0;
+    pthread_mutex_unlock(&g_hk_io);
+    return ino;
 }
 
 JNIEXPORT void JNICALL Java_com_example_dsedge_NativeBridge_nativeHookupOutput(JNIEnv *env, jclass c, jint slot, jint kind, jbyteArray data)
@@ -140,12 +187,26 @@ static int hookup_count(void)
     return n;
 }
 
+/* Hooked-up controllers whose reports currently go straight into DroidDeck's shared memory. */
+static int hookup_fast_count(void)
+{
+    int n = 0;
+    for (int i = 0; i < HOOKUP_SLOTS; i++) if (g_hk[i].dev && atomic_load(&g_hk_fast_now[i])) n++;
+    return n;
+}
+
 static void hk_close(JNIEnv *env, int i, const char *why)
 {
     if (!g_hk[i].dev) return;
     hk_log(env, "hookup: slot %d %04x:%04x released (%s)", i, g_hk[i].vid, g_hk[i].pid, why);
-    SDL_hid_close(g_hk[i].dev);
+    pthread_mutex_lock(&g_hk_io);          /* the reader thread is not inside a pass now, and won't see it again */
+    SDL_hid_device *dev = g_hk[i].dev;
     memset(&g_hk[i], 0, sizeof(g_hk[i]));
+    atomic_store(&g_hk_gone[i], 0);
+    atomic_store(&g_hk_fast_now[i], 0);
+    pthread_mutex_unlock(&g_hk_io);
+    g_hk_fast_logged[i] = 0;
+    SDL_hid_close(dev);
     if (g_hk_removed) (*env)->CallStaticVoidMethod(env, g_cls, g_hk_removed, (jint)i);
     if ((*env)->ExceptionCheck(env)) (*env)->ExceptionClear(env);
 }
@@ -156,31 +217,143 @@ static bool hk_path_open(const char *path)
     return false;
 }
 
+/*
+ * Reader thread: takes each report the moment SDL's USB thread has queued it (checked every 250 us instead of
+ * once per main-loop pass) and writes it straight into Steam's FIFO, waking Steam's reader. When the fast path
+ * is not available for a slot, the report goes the old way (Java -> message to DroidDeck).
+ */
+static int SDLCALL hk_reader(void *unused)
+{
+    (void)unused;
+    JNIEnv *env = (JNIEnv *)SDL_GetAndroidJNIEnv();
+    setpriority(PRIO_PROCESS, (id_t)syscall(SYS_gettid), -10);   /* like Android's URGENT_DISPLAY; ignored if refused */
+    for (;;) {
+        int got = 0, any = 0;
+        pthread_mutex_lock(&g_hk_io);
+        for (int i = 0; i < HOOKUP_SLOTS; i++) {
+            SDL_hid_device *dev = g_hk[i].dev;
+            if (!dev || atomic_load(&g_hk_gone[i])) continue;
+            any = 1;
+            int fast = hks_owns(&g_hks, i, g_hk[i].vid, g_hk[i].pid);
+            atomic_store(&g_hk_fast_now[i], fast);
+            for (int reads = 0; reads < 64; reads++) {
+                Uint8 buf[HOOKUP_REPORT_MAX];
+                int n = SDL_hid_read(dev, buf, sizeof(buf));
+                if (n == 0) break;
+                if (n < 0) { atomic_store(&g_hk_gone[i], 1); break; }
+                got++;
+                if (fast) {
+                    hks_write_in(&g_hks, i, buf, n);
+                } else if (env && g_hk_input) {
+                    jbyteArray arr = hk_bytes(env, buf, n);
+                    if (arr) (*env)->CallStaticVoidMethod(env, g_cls, g_hk_input, (jint)i, arr);
+                    if ((*env)->ExceptionCheck(env)) (*env)->ExceptionClear(env);
+                    if (arr) (*env)->DeleteLocalRef(env, arr);
+                }
+            }
+        }
+        pthread_mutex_unlock(&g_hk_io);
+        if (!got) {
+            struct timespec t = { 0, any ? 250000L : 20000000L };   /* 250 us while controllers are handed over */
+            nanosleep(&t, NULL);
+        }
+    }
+    return 0;
+}
+
+static void hk_start_reader(void)
+{
+    if (atomic_exchange(&g_hk_reader_started, 1)) return;
+    SDL_Thread *t = SDL_CreateThread(hk_reader, "hookup-reader", NULL);
+    if (t) SDL_DetachThread(t);
+    else atomic_store(&g_hk_reader_started, 0);
+}
+
+/* SDL thread, every loop: Steam's output reports and feature reads for the slots the bridge serves directly. */
+static void hk_serve_fast(JNIEnv *env)
+{
+    uint64_t now = hks_now_ms();
+    for (int i = 0; i < HOOKUP_SLOTS; i++) {
+        SDL_hid_device *dev = g_hk[i].dev;
+        if (!dev) continue;
+        HksOut outs[16];
+        int nout = 0, want_get = 0, report_id = 0, input = 0, length = 0, fast;
+        uint64_t request = 0;
+        pthread_mutex_lock(&g_hk_io);
+        fast = hks_owns(&g_hks, i, g_hk[i].vid, g_hk[i].pid);
+        if (fast) {
+            hks_heartbeat(&g_hks, i, now);
+            nout = hks_take_out(&g_hks, i, outs, (int)SDL_arraysize(outs));
+            want_get = hks_get_pending(&g_hks, i, &g_hk_get_last[i], &request, &report_id, &input, &length);
+        }
+        pthread_mutex_unlock(&g_hk_io);
+        if (fast != g_hk_fast_logged[i]) {
+            g_hk_fast_logged[i] = fast;
+            if (fast) hk_log(env, "hookup: slot %d served through shared memory (fast path)", i);
+        }
+        for (int k = 0; k < nout; k++) {
+            if (outs[k].kind == 1) SDL_hid_send_feature_report(dev, outs[k].data, (size_t)outs[k].len);
+            else SDL_hid_write(dev, outs[k].data, (size_t)outs[k].len);
+        }
+        if (want_get) {
+            Uint8 buf[HOOKUP_REPORT_MAX + 1] = { 0 };
+            buf[0] = (Uint8)report_id;
+            int n = input ? SDL_hid_get_input_report(dev, buf, (size_t)length)
+                          : SDL_hid_get_feature_report(dev, buf, (size_t)length);
+            pthread_mutex_lock(&g_hk_io);
+            if (hks_owns(&g_hks, i, g_hk[i].vid, g_hk[i].pid)) hks_get_reply(&g_hks, i, request, buf, n);
+            pthread_mutex_unlock(&g_hk_io);
+        }
+    }
+}
+
+static int hk_free_slot(void)
+{
+    for (int i = 0; i < HOOKUP_SLOTS; i++) if (!g_hk[i].dev) return i;
+    return -1;
+}
+
+/* Read the HID report descriptor while nobody holds the interface (Android refuses an interface request on an
+ * interface another connection has claimed), so Steam gets the controller's real one. */
+static void hk_prefetch(JNIEnv *env, const char *path)
+{
+    if (!g_hk_prefetch) return;
+    jstring p = (*env)->NewStringUTF(env, path);
+    (*env)->CallStaticVoidMethod(env, g_cls, g_hk_prefetch, p);
+    (*env)->DeleteLocalRef(env, p);
+    if ((*env)->ExceptionCheck(env)) (*env)->ExceptionClear(env);
+}
+
+static bool hk_adopt(JNIEnv *env, int slot, SDL_hid_device *dev, const char *path, Uint16 vid, Uint16 pid, int iface);
+
 static bool hk_open(JNIEnv *env, const char *path, Uint16 vid, Uint16 pid, int iface)
 {
     if (hk_path_open(path)) return true;
-    int slot = -1;
-    for (int i = 0; i < HOOKUP_SLOTS; i++) if (!g_hk[i].dev) { slot = i; break; }
+    int slot = hk_free_slot();
     if (slot < 0) return false;
-    /* Read the HID report descriptor while nobody holds the interface (Android refuses an interface request
-     * on an interface another connection has claimed), so Steam gets the controller's real one. */
-    if (g_hk_prefetch) {
-        jstring p = (*env)->NewStringUTF(env, path);
-        (*env)->CallStaticVoidMethod(env, g_cls, g_hk_prefetch, p);
-        (*env)->DeleteLocalRef(env, p);
-        if ((*env)->ExceptionCheck(env)) (*env)->ExceptionClear(env);
-    }
+    hk_prefetch(env, path);
     SDL_hid_device *dev = SDL_hid_open_path(path);
     if (!dev) {
         hk_log(env, "hookup: could not open %s: %s", path, SDL_GetError());
         return false;
     }
     SDL_hid_set_nonblocking(dev, 1);
-    g_hk[slot].dev = dev;
+    return hk_adopt(env, slot, dev, path, vid, pid, iface);
+}
+
+/* A raw-opened controller interface becomes hook-up slot `slot` (reader thread + DroidDeck's hidraw node). */
+static bool hk_adopt(JNIEnv *env, int slot, SDL_hid_device *dev, const char *path, Uint16 vid, Uint16 pid, int iface)
+{
+    pthread_mutex_lock(&g_hk_io);
     SDL_strlcpy(g_hk[slot].path, path, sizeof(g_hk[slot].path));
     g_hk[slot].vid = vid;
     g_hk[slot].pid = pid;
     g_hk[slot].iface = iface;
+    atomic_store(&g_hk_gone[slot], 0);
+    g_hk_get_last[slot] = 0;
+    g_hk[slot].dev = dev;
+    pthread_mutex_unlock(&g_hk_io);
+    hk_start_reader();
     hk_log(env, "hookup: slot %d is %04x:%04x interface %d (%s), handing it to DroidDeck", slot, vid, pid, iface, path);
     if (g_hk_added) {
         jstring p = (*env)->NewStringUTF(env, path);
@@ -310,6 +483,110 @@ static void hookup_run_queue(JNIEnv *env)
     }
 }
 
+/*
+ * Steam Controller (2026): cable 28de:1302, wireless puck 28de:1304/1305 (one controller per interface 2..5).
+ * SDL's gamepad layer never opens it (it is always on the ignore list; outside hook-up, triton.h passes it
+ * through to DroidDeck's own Steam Controller node), so hook-up finds it itself. Android doesn't say which of
+ * its HID interfaces is the controller, so the candidates are opened and watched, and the one that carries a
+ * controller -- state reports, or the puck announcing a connected controller -- is handed to Steam as itself,
+ * exactly like on a PC (Steam drives lizard mode, haptics, trackpads, grip sense, IMU). Only interfaces with a
+ * controller get a hook-up slot, so a puck doesn't use up all four.
+ */
+#define HK_WATCH_MAX 6
+typedef struct {
+    SDL_hid_device *dev;
+    char path[256];
+    Uint16 pid;
+    int iface;
+} HkWatch;
+static HkWatch g_hkw[HK_WATCH_MAX];
+static int g_hkw_full_logged;
+
+static bool hk_triton_puck(Uint16 pid) { return pid == 0x1304 || pid == 0x1305; }
+
+static bool hk_watching(const char *path)
+{
+    for (int w = 0; w < HK_WATCH_MAX; w++) if (g_hkw[w].dev && !strcmp(g_hkw[w].path, path)) return true;
+    return false;
+}
+
+static void hk_watch_close_all(void)
+{
+    for (int w = 0; w < HK_WATCH_MAX; w++) {
+        if (g_hkw[w].dev) SDL_hid_close(g_hkw[w].dev);
+        memset(&g_hkw[w], 0, sizeof(g_hkw[w]));
+    }
+}
+
+static void hk_valve_scan(JNIEnv *env)
+{
+    SDL_hid_device_info *list = SDL_hid_enumerate(VALVE_VID, 0);
+    for (SDL_hid_device_info *d = list; d; d = d->next) {
+        if (!d->path || !triton_pid(d->product_id)) continue;
+        if (hk_triton_puck(d->product_id) && (d->interface_number < 2 || d->interface_number > 5)) continue;
+        if (d->interface_class == 3 && d->interface_subclass == 1) continue;   /* boot keyboard / mouse (lizard mode) */
+        if (hk_path_open(d->path) || hk_watching(d->path)) continue;
+        int w = -1;
+        for (int k = 0; k < HK_WATCH_MAX; k++) if (!g_hkw[k].dev) { w = k; break; }
+        if (w < 0) break;
+        hk_prefetch(env, d->path);   /* before it is opened: the descriptor can only be read while nobody holds it */
+        SDL_hid_device *dev = SDL_hid_open_path(d->path);
+        if (!dev) {
+            hk_log(env, "hookup: could not open Steam Controller (2026) interface %d: %s", d->interface_number, SDL_GetError());
+            continue;
+        }
+        SDL_hid_set_nonblocking(dev, 1);
+        g_hkw[w].dev = dev;
+        SDL_strlcpy(g_hkw[w].path, d->path, sizeof(g_hkw[w].path));
+        g_hkw[w].pid = d->product_id;
+        g_hkw[w].iface = d->interface_number;
+        if (!hk_triton_puck(d->product_id)) tri_lizard_off(dev);   /* no stray mouse input until Steam owns it */
+        hk_log(env, "hookup: Steam Controller (2026) %s, interface %d: waiting for controller data",
+               hk_triton_puck(d->product_id) ? "puck" : "cable", d->interface_number);
+    }
+    SDL_hid_free_enumeration(list);
+}
+
+static void hk_valve_poll(JNIEnv *env)
+{
+    for (int w = 0; w < HK_WATCH_MAX; w++) {
+        for (int reads = 0; g_hkw[w].dev && reads < 16; reads++) {
+            Uint8 buf[HOOKUP_REPORT_MAX];
+            int n = SDL_hid_read(g_hkw[w].dev, buf, sizeof(buf));
+            if (n == 0) break;
+            if (n < 0) {
+                hk_log(env, "hookup: Steam Controller (2026) interface %d gone", g_hkw[w].iface);
+                SDL_hid_close(g_hkw[w].dev);
+                memset(&g_hkw[w], 0, sizeof(g_hkw[w]));
+                break;
+            }
+            Uint8 id = buf[0];
+            bool controller = id == 0x42 || id == 0x45 || id == 0x47 || ((id == 0x79 || id == 0x46) && n >= 2 && buf[1] == 2);
+            if (!controller) continue;
+            int slot = hk_free_slot();
+            if (slot < 0) {
+                if (!g_hkw_full_logged) hk_log(env, "hookup: a Steam Controller (2026) is ready but all %d hook-up slots are in use", HOOKUP_SLOTS);
+                g_hkw_full_logged = 1;
+                break;
+            }
+            g_hkw_full_logged = 0;
+            HkWatch h = g_hkw[w];
+            memset(&g_hkw[w], 0, sizeof(g_hkw[w]));   /* the handle moves to the hook-up slot */
+            hk_log(env, "hookup: Steam Controller (2026) on %s interface %d goes to Steam natively",
+                   hk_triton_puck(h.pid) ? "the puck," : "the cable,", h.iface);
+            hk_adopt(env, slot, h.dev, h.path, VALVE_VID, h.pid, h.iface);
+        }
+    }
+}
+
+/* Why triton.h must not pass a Steam Controller (2026) through right now (NULL: it may). Hook-up hands it to
+ * Steam itself while on -- and until it has actually released it after being switched off, so the two never
+ * hold the same interface. */
+static const char *hookup_triton_off_why(void)
+{
+    return atomic_load(&g_hookup_on) || g_hookup_applied == 1 ? "handed to Steam natively (Steam Native Hook-up)" : NULL;
+}
+
 static void hookup_poll(JNIEnv *env, Uint64 now, bool driver_off)
 {
     hk_java_init(env);
@@ -318,8 +595,11 @@ static void hookup_poll(JNIEnv *env, Uint64 now, bool driver_off)
         int was = g_hookup_applied;
         g_hookup_applied = on;
         hk_log(env, "hookup: Steam Native Hook-up %s", on ? "ON" : "OFF");
+        if (on) g_hk_changes = 0xffffffffu;   /* look for controllers (incl. a Steam Controller 2026) right away */
         if (!on && was == 1) {
             for (int i = 0; i < HOOKUP_SLOTS; i++) hk_close(env, i, "Steam Native Hook-up off");
+            hk_watch_close_all();
+            g_tri_changes = 0xffffffffu;   /* triton.h takes a Steam Controller (2026) back at once */
             g_hk_types[0] = 0;
             g_hk_type_count = 0;
             hk_apply_ignore_list(env);
@@ -337,18 +617,20 @@ static void hookup_poll(JNIEnv *env, Uint64 now, bool driver_off)
         g_hk_changes = changes;
         g_hk_scan_ms = now;
         hookup_scan(env);
+        hk_valve_scan(env);
     }
-    for (int i = 0; i < HOOKUP_SLOTS; i++) {
-        for (int reads = 0; g_hk[i].dev && reads < 64; reads++) {
-            Uint8 buf[HOOKUP_REPORT_MAX];
-            int n = SDL_hid_read(g_hk[i].dev, buf, sizeof(buf));
-            if (n == 0) break;
-            if (n < 0) { hk_close(env, i, "unplugged"); break; }
-            jbyteArray arr = hk_bytes(env, buf, n);
-            if (arr && g_hk_input) (*env)->CallStaticVoidMethod(env, g_cls, g_hk_input, (jint)i, arr);
-            if ((*env)->ExceptionCheck(env)) (*env)->ExceptionClear(env);
-            if (arr) (*env)->DeleteLocalRef(env, arr);
-        }
+    hk_valve_poll(env);
+    /* reports are read by hk_reader(); here: controllers it saw go away, and Steam's side of the fast path */
+    for (int i = 0; i < HOOKUP_SLOTS; i++)
+        if (g_hk[i].dev && atomic_load(&g_hk_gone[i])) hk_close(env, i, "unplugged");
+    if (now - g_hk_alive_ms > 500) {
+        g_hk_alive_ms = now;
+        int dropped = 0;
+        pthread_mutex_lock(&g_hk_io);
+        if (g_hks.base && !hks_alive(&g_hks)) { hks_unmap(&g_hks); dropped = 1; }
+        pthread_mutex_unlock(&g_hk_io);
+        if (dropped) hk_log(env, "hookup: DroidDeck's session ended; fast path off until it hands over its new shared file");
     }
+    hk_serve_fast(env);
     hookup_run_queue(env);
 }

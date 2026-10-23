@@ -178,6 +178,7 @@ static void tri_scan(JNIEnv *env)
         /* The puck carries one controller per interface 2..5; the cable has a single controller interface. */
         if (triton_dongle(d->product_id) && (d->interface_number < 2 || d->interface_number > 5)) continue;
         if (!triton_dongle(d->product_id) && d->usage_page != 0 && d->usage_page < 0xff00) continue;
+        if (d->interface_class == 3 && d->interface_subclass == 1) continue;   /* boot keyboard / mouse (lizard mode) */
         if (tri_is_open(d->path)) continue;
         int slot = -1;
         for (int i = 0; i < TRITON_MAX_IFACES; i++) if (!g_tri[i].dev) { slot = i; break; }
@@ -238,11 +239,13 @@ static void tri_rumble(Uint64 now)
     g_tri_rumble_ms = now;
 }
 
-static void triton_poll(JNIEnv *env, Uint64 now, bool driver_off)
+/* off_why: NULL = pass the controller through; otherwise why not (SDL3 driver off, or Steam Native Hook-up,
+ * which hands the Steam Controller (2026) to Steam as itself instead -- see hookup.h). */
+static void triton_poll(JNIEnv *env, Uint64 now, const char *off_why)
 {
     tri_java_init(env);
-    if (driver_off) {
-        tri_close_all(env, "SDL3 driver off");
+    if (off_why) {
+        tri_close_all(env, off_why);
         return;
     }
     Uint32 changes = SDL_hid_device_change_count();
