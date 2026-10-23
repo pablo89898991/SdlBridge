@@ -177,7 +177,7 @@ public final class NativeBridge {
         String stamped = new java.text.SimpleDateFormat("HH:mm:ss.SSS", java.util.Locale.US).format(new java.util.Date()) + " " + line;
         synchronized (bridgeLog) {
             bridgeLog.addLast(stamped);
-            while (bridgeLog.size() > 60) bridgeLog.removeFirst();
+            while (bridgeLog.size() > 200) bridgeLog.removeFirst();
         }
         for (Listener l : listeners) l.onBridgeLog(stamped);
     }
@@ -235,6 +235,7 @@ public final class NativeBridge {
 
     /** Called from the native SDL thread. */
     static void onStatus(String s) {
+        SdlEngine.onNativeStatus();
         lastStatus = s;
         for (Listener l : listeners) l.onStatus(s);
     }

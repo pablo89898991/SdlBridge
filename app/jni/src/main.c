@@ -106,6 +106,18 @@ JNIEXPORT void JNICALL Java_com_example_dsedge_NativeBridge_nativeSetDriver(JNIE
     atomic_store(&g_rescan, 1);
 }
 
+/* A line in DroidDeck's session log ("sdl3bridge: ...") through NativeBridge.onBridgeLog. */
+static void engine_log(JNIEnv *env, const char *msg)
+{
+    SDL_Log("%s", msg);
+    jmethodID m = (*env)->GetStaticMethodID(env, g_cls, "onBridgeLog", "(Ljava/lang/String;)V");
+    if ((*env)->ExceptionCheck(env)) { (*env)->ExceptionClear(env); return; }
+    jstring s = (*env)->NewStringUTF(env, msg);
+    if (m && s) (*env)->CallStaticVoidMethod(env, g_cls, m, s);
+    if (s) (*env)->DeleteLocalRef(env, s);
+    if ((*env)->ExceptionCheck(env)) (*env)->ExceptionClear(env);
+}
+
 static void send_status(JNIEnv *env, const char *msg)
 {
     jstring s = (*env)->NewStringUTF(env, msg);
@@ -530,7 +542,11 @@ int main(int argc, char *argv[])
     SDL_SetHint(SDL_HINT_GAMECONTROLLER_IGNORE_DEVICES, "0x28de/0x1302,0x28de/0x1304,0x28de/0x1305");
 
     JNIEnv *env = (JNIEnv *)SDL_GetAndroidJNIEnv();
-    if (!env || !g_cls) return 1;
+    if (!env || !g_cls) {
+        SDL_Log("SDL3Bridge: no JNI environment (%p) or bridge class (%p); SDL3's loop cannot run", (void *)env, (void *)g_cls);
+        return 1;
+    }
+    engine_log(env, "engine: SDL3's loop started; initialising SDL3's gamepad support");
 
     if (!SDL_Init(SDL_INIT_GAMEPAD)) {
         char msg[200];
@@ -538,6 +554,7 @@ int main(int argc, char *argv[])
         send_status(env, msg);
         return 1;
     }
+    engine_log(env, "engine: SDL3's gamepad support is up");
     SDL_hid_init();   /* keeps the HID layer alive across gamepad-layer restarts (raw passthrough handles) */
     send_status(env, "Waiting for a controller (plug it in via USB-C)");
 

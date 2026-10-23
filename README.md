@@ -263,3 +263,9 @@ which is now only the test screen and settings and can be opened and closed at a
 the app is force-stopped. Android 13+ asks once for notification permission (needed for the icon). If Android
 does not allow a foreground service at that moment, the icon is shown as a plain ongoing notification and
 DroidDeck's connection keeps the bridge alive.
+
+Self-protecting: before each background start the bridge saves a marker, cleared when SDL3's loop reports its
+first status. If SDL3 stays silent for 10 s, its loop ends, or the app dies during the attempt, the bridge restarts
+and uses the fallback -- SDL3 in an invisible screen kept in the background (SdlHostActivity), the old way -- until
+the app is updated. Each step and, after a failure, the bridge's own log (crash report included) go to DroidDeck's
+session log as "sdl3bridge: engine: ..."; DroidDeck's SDL3Bridge page shows how SDL3 runs ("SDL3 runs in ...").

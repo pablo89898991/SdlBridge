@@ -183,13 +183,10 @@ public class BridgeService extends Service implements NativeBridge.Listener {
         // SDL3 runs here, in the background: nothing has to open when DroidDeck (or a plugged-in controller)
         // starts the bridge. The notification is the bridge's icon in the status bar.
         SdlEngine.start(this);
-        try {
-            startForegroundService(new Intent(this, BridgeService.class));   // -> onStartCommand: startForeground
-        } catch (RuntimeException e) {
-            // Android may refuse a foreground start while the app is in the background: show the same
-            // notification as a plain ongoing one; DroidDeck's connection keeps the bridge alive meanwhile.
-            postNotification(false);
-        }
+        // The status bar icon. Started by DroidDeck's connection it is a plain ongoing notification (that
+        // connection keeps the bridge alive); started from the bridge screen or a plugged-in controller,
+        // onStartCommand turns it into the foreground service's notification.
+        postNotification(false);
     }
 
     // ---------- status bar notification ----------
@@ -258,13 +255,7 @@ public class BridgeService extends Service implements NativeBridge.Listener {
         } else if (Settings.bubble) {
             showBubble();
         }
-        if (!postNotification(true)) {
-            // Android refused the foreground notification: a started foreground service that never shows it
-            // would be stopped with an error, so stop being "started" (DroidDeck's connection keeps the
-            // bridge alive) and show the icon as a plain ongoing notification instead.
-            postNotification(false);
-            stopSelf(startId);
-        }
+        if (!postNotification(true)) postNotification(false);
         return START_NOT_STICKY;
     }
 
@@ -810,6 +801,7 @@ public class BridgeService extends Service implements NativeBridge.Listener {
         b.putBoolean("overlayAllowed", android.provider.Settings.canDrawOverlays(this));
         b.putBoolean("notifications", getSystemService(NotificationManager.class).areNotificationsEnabled());
         b.putString("engineError", SdlEngine.error == null ? "" : SdlEngine.error);
+        b.putString("engineMode", SdlEngine.mode);
         b.putBoolean("fastPath", NativeBridge.hookupShmInode() != 0);
         b.putString("triton", NativeBridge.tritonConnected ? NativeBridge.tritonWhat : "");
         String[] padNames = new String[NativeBridge.MAX_PADS], padIds = new String[NativeBridge.MAX_PADS];
