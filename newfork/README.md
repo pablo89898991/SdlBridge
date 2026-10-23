@@ -214,7 +214,7 @@ report at a time), with no taps lost instead of up to 4 in 10. When Steam reads 
 | `hookup: … / deck: … reports/s, Steam read …` | Steam was slow to read a controller: how many reports it read, how late, and which way it reads |
 | `hookup: … the controller fell behind` | Steam sent output reports faster than the controller took them |
 | `thread N (…) now runs at higher priority` | One of Steam's controller threads was raised |
-| `mouse: …` | Steam Input's mouse clicks / keys on their way to the game: sent by Steam, handed over by the X server, received by gamescope |
+| `mouse: …` | Steam Input's mouse clicks / keys on their way to the game: handed over by the X server, received by gamescope |
 | `bridge: input lag, last 10 s` | Bridge frames arrived late in DroidDeck |
 | `sdl3bridge: …` | The bridge's own log: hand-overs, fast path, engine start-up |
 

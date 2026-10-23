@@ -252,11 +252,12 @@ are timed directly; for the rest, a learned button-like bit that turns on counts
 - `hookup: /dev/hidraw24: N reports/s, Steam read M/s (all waiting each time | the newest each time), avg X ms after
   they arrived ...` (`deck: Steam Deck pad: ...` for DroidDeck's own pads) when Steam was slow to read, and which
   way Steam reads (`Steam takes every report waiting each time` / `Steam reads one report at a time`).
-- `mouse: ...` -- Steam Input's mouse / keyboard output, step by step: Steam sending an XTest button or key
-  (`sent XTest mouse button 1 press to X display :0`), the X server handing it to gamescope (`X server handed
-  mouse button 0x110 press to gamescope (libei)`), gamescope receiving it (`gamescope received mouse button ...`).
-  A click that never reaches a game shows the step where it stops. Buttons are logged one by one at first, then
-  every 100th; keys a few times to compare.
+- `mouse: ...` -- Steam Input's mouse / keyboard output on its way to the game. Steam sends XTest events to the
+  game's X server (Xwayland); the trace shows the X server handing them to gamescope (`X server handed mouse button
+  0x110 press to gamescope (libei)`), gamescope receiving them (`gamescope received mouse button ...`), and the
+  input device each side set up (which kinds of input it can send). A click that never reaches a game shows the
+  step where it stops. Buttons are logged one by one at first, then every 100th; keys a few times to compare.
+  (Steam's own XTest calls are not traced: Steam loads that library privately, and wrapping it dropped its input.)
 - `hookup: ... the controller fell behind` (Steam's output reports waited for room) and `hookup: report 0xNN read took
   X ms` (a slow feature read).
 
