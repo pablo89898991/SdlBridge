@@ -216,3 +216,20 @@ With a DroidDeck build from this fork, Steam Native Hook-up skips every hop it c
 
 Measured in a test with the real DroidDeck code and hook (Binder hop not even counted for the old path):
 median 1.45 ms -> 0.29 ms, p90 2.3 ms -> 0.44 ms from report to Steam. The status line shows "fast path".
+
+## No input lag build-up
+
+Every input path keeps only fresh state waiting, never a growing line of old input:
+- The bridge sends a frame to DroidDeck only when the controller state changed (plus 20 ms after a change and a
+  keep-alive every 100 ms), instead of on every loop pass.
+- DroidDeck takes the bridge's messages on the Binder thread that receives them: hook-up reports and Steam
+  Controller states go straight into shared memory, and frames are "latest wins" per controller -- only the newest
+  waits for the worker thread, every button / trackpad change is kept so no tap is lost, and a stick/gyro-only
+  frame that arrives more than 50 ms old is dropped. The worker thread runs at URGENT_DISPLAY priority.
+- Steam's hook-up nodes buffer about 6 reports (like DroidDeck's own controller nodes), so a slow Steam reads
+  near-current input.
+- Lag meters in pad.log: "bridge: input lag, last 10 s: ..." (DroidDeck) and "hookup: ... Steam read too slowly"
+  (Steam side) appear only when input was late.
+
+Simulated with a worker that is too slow: a plain queue was 5.3 s behind after 10 s of play; latest-wins stays
+within ~1 ms and keeps every button change.

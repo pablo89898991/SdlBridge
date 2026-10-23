@@ -480,8 +480,32 @@ public class BridgeService extends Service implements NativeBridge.Listener {
 
     // ---------- controller -> clients ----------
 
+    // A frame goes to DroidDeck only when the controller state changed (and for FRAME_SETTLE_MS after a change, so
+    // DroidDeck's stick throttle always gets the final position), plus a keep-alive every FRAME_KEEPALIVE_MS. The
+    // loop runs at up to 1000 Hz but most controllers report at 250-500 Hz, and an idle controller not at all:
+    // sending every pass only fills DroidDeck's queue with copies.
+    private static final long FRAME_SETTLE_MS = 20, FRAME_KEEPALIVE_MS = 100;
+    private final float[][] lastFrame = new float[NativeBridge.MAX_PADS][];
+    private final long[] lastFrameChangeMs = new long[NativeBridge.MAX_PADS], lastFrameSentMs = new long[NativeBridge.MAX_PADS];
+
+    private boolean frameWorthSending(float[] f, int slot) {
+        if (slot < 0 || slot >= NativeBridge.MAX_PADS) return true;
+        long now = SystemClock.uptimeMillis();
+        float[] last = lastFrame[slot];
+        if (last == null || last.length != f.length) last = lastFrame[slot] = new float[f.length];
+        if (!java.util.Arrays.equals(f, last)) {
+            System.arraycopy(f, 0, last, 0, f.length);   // f is native's reused array: keep a copy
+            lastFrameChangeMs[slot] = now;
+        } else if (now - lastFrameChangeMs[slot] > FRAME_SETTLE_MS && now - lastFrameSentMs[slot] < FRAME_KEEPALIVE_MS) {
+            return false;
+        }
+        lastFrameSentMs[slot] = now;
+        return true;
+    }
+
     @Override public void onFrame(float[] f, int slot) {
         if (clients.isEmpty() || f.length < NativeBridge.FRAME_LEN) return;
+        if (!frameWorthSending(f, slot)) return;
         Bundle b = new Bundle();
         b.putByteArray("raw", new byte[0]);
         b.putLong("t", SystemClock.elapsedRealtimeNanos());
