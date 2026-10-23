@@ -275,6 +275,13 @@ Simulated with a Steam that reads only every 15-45 ms, press to Steam: 1000 Hz c
 39), 250 Hz avg 28 -> 15 ms; 15 ms taps: 30 of 44 reached Steam before, all now. When Steam reads in time nothing
 changes (0.2 ms).
 
+## Steam's controller threads at higher priority
+
+Inside Steam, the threads that read controllers (hooked-up ones and DroidDeck's own pads -- every controller), the
+one that writes Steam's virtual pad, and DroidDeck's own report threads run at nice -8, like Android's input
+threads. On a phone the game and the x86 emulation keep the CPU busy; Steam's controller loop otherwise waits its
+turn behind them, which is when it reads late. pad.log: "thread N (...) now runs at higher priority".
+
 ## SDL3Bridge tab in DroidDeck's Settings
 
 With a DroidDeck build from this fork, Setup has an **SDL3Bridge** tab, and the in-session drawer has the same
