@@ -60,6 +60,10 @@ public class BridgeService extends Service implements NativeBridge.Listener {
     static final int MSG_HOOKUP_SYNC = 9;      // client watchdog: resend what is handed over (re-registers if needed)
     static final int MSG_HOOKUP_STATE = 24;    // "slots": int[] of live hook-up slots; "fast_ino": mapped shared file
     static final int MSG_HOOKUP_SHM = 25;      // <- DroidDeck: "fd": its shared hook-up file (fast path)
+    // DroidDeck's SDL3Bridge settings tab (no REGISTER needed: it gets no frames, only replies)
+    static final int MSG_SETTINGS_GET = 40;    // <- replyTo: send MSG_SETTINGS
+    static final int MSG_SETTINGS_SET = 41;    // <- "key" [+ "p" player, "i" index] + "int" / "bool"; replyTo: send MSG_SETTINGS
+    static final int MSG_SETTINGS = 42;        // -> the whole settings state + controller status (see settingsSnapshot)
 
     private static final float RAD_TO_DEG = 57.29578f;
     private static final float G = 9.80665f;
@@ -137,6 +141,13 @@ public class BridgeService extends Service implements NativeBridge.Listener {
                     NativeBridge.hookupMapShm(pfd);
                     break;
                 }
+                case MSG_SETTINGS_SET:
+                    applyRemote(m.getData());
+                    // fall through: answer with the new state
+                case MSG_SETTINGS_GET:
+                    if (m.replyTo != null) sendOne(m.replyTo, MSG_SETTINGS, settingsSnapshot());
+                    if (m.what == MSG_SETTINGS_GET) ensureBridgeLoop();   // the tab shows live controllers
+                    break;
                 case MSG_HOOKUP_GET:
                     NativeBridge.hookupGet(m.getData().getInt("slot"), m.getData().getLong("request"), m.getData().getInt("id"),
                         m.getData().getBoolean("input"), m.getData().getInt("length", 64));
@@ -504,6 +515,10 @@ public class BridgeService extends Service implements NativeBridge.Listener {
     }
 
     @Override public void onFrame(float[] f, int slot) {
+        if (slot >= 0 && slot < NativeBridge.MAX_PADS && f.length >= NativeBridge.FRAME_LEN) {
+            lastBattery[slot] = (int) f[19];
+            calibrationSample(f, slot);
+        }
         if (clients.isEmpty() || f.length < NativeBridge.FRAME_LEN) return;
         if (!frameWorthSending(f, slot)) return;
         Bundle b = new Bundle();
@@ -704,6 +719,165 @@ public class BridgeService extends Service implements NativeBridge.Listener {
         b.putLong("request", request);
         if (report != null) b.putByteArray("data", report);
         sendAll(MSG_HOOKUP_REPLY, b);
+    }
+
+    // ---------- DroidDeck's SDL3Bridge settings tab ----------
+    private final int[] lastBattery = { -1, -1, -1, -1 };
+
+    // Gyro calibration started from DroidDeck: averages the resting gyro of that player's own controller.
+    private static final int CALIB_SAMPLES = 180;   // ~0.7 s at 4 ms per frame
+    private final Object calibLock = new Object();
+    private int calibPlayer = -1, calibCount;
+    private final float[] calibSum = new float[3];
+
+    private void startCalibration(int p) {
+        synchronized (calibLock) { calibPlayer = p; calibCount = 0; calibSum[0] = calibSum[1] = calibSum[2] = 0f; }
+    }
+
+    private void calibrationSample(float[] f, int slot) {
+        synchronized (calibLock) {
+            if (calibPlayer != slot) return;
+            calibSum[0] += f[7]; calibSum[1] += f[8]; calibSum[2] += f[9];
+            if (++calibCount < CALIB_SAMPLES) return;
+            float[] b = Settings.gyroBias[slot];
+            for (int k = 0; k < 3; k++) b[k] = calibSum[k] / CALIB_SAMPLES * RAD_TO_DEG;
+            calibPlayer = -1;
+        }
+        Settings.save();
+    }
+
+    /** Everything the tab shows: settings, their choices (so DroidDeck needs no copy of them) and live status. */
+    private Bundle settingsSnapshot() {
+        Bundle b = new Bundle();
+        b.putInt("v", 1);
+        b.putString("status", NativeBridge.lastStatus);
+        b.putBoolean("overlayAllowed", android.provider.Settings.canDrawOverlays(this));
+        b.putBoolean("fastPath", NativeBridge.hookupShmInode() != 0);
+        b.putString("triton", NativeBridge.tritonConnected ? NativeBridge.tritonWhat : "");
+        String[] padNames = new String[NativeBridge.MAX_PADS], padIds = new String[NativeBridge.MAX_PADS];
+        String[] hookNames = new String[NativeBridge.MAX_PADS], hookIds = new String[NativeBridge.MAX_PADS];
+        for (int i = 0; i < NativeBridge.MAX_PADS; i++) {
+            String n = NativeBridge.names[i];
+            padNames[i] = n == null ? "" : n;
+            padIds[i] = n == null ? "" : String.format("%04x:%04x", NativeBridge.vids[i], NativeBridge.pids[i]);
+            Bundle h = NativeBridge.hookupIdentity[i];
+            hookNames[i] = h == null ? "" : h.getString("name", "");
+            hookIds[i] = h == null ? "" : String.format("%04x:%04x", h.getInt("vid"), h.getInt("pid"));
+        }
+        b.putStringArray("padNames", padNames);
+        b.putStringArray("padIds", padIds);
+        b.putIntArray("padBattery", lastBattery.clone());
+        b.putStringArray("hookNames", hookNames);
+        b.putStringArray("hookIds", hookIds);
+        synchronized (calibLock) { b.putInt("calibrating", calibPlayer); }
+        // global settings
+        b.putInt("presentAs", Settings.presentAs);
+        b.putBoolean("driverEnabled", Settings.driverEnabled);
+        b.putBoolean("forceUsb", Settings.forceUsb);
+        b.putInt("pollMs", Settings.pollMs);
+        b.putBoolean("bubble", Settings.bubble);
+        // choices
+        b.putStringArray("presentNames", Settings.PRESENT_NAMES);
+        b.putStringArray("rateNames", Settings.RATE_NAMES);
+        b.putIntArray("rateMs", Settings.RATE_MS);
+        b.putStringArray("touchNames", Settings.TOUCH_NAMES);
+        b.putStringArray("srcNames", Settings.SRC_NAMES);
+        b.putStringArray("remapTargets", Settings.REMAP_TARGETS);
+        b.putStringArray("axisNames", Settings.AXIS_NAMES);
+        b.putStringArray("gyroInvNames", Settings.GYRO_INV_NAMES);
+        b.putStringArray("playerLedNames", Settings.PLAYER_NAMES);
+        // per player (index p, or p * n + i for the ones with several entries)
+        int P = Settings.PLAYERS;
+        int[] gyroMap = new int[P * 3], remap = new int[P * Settings.REMAP_COUNT];
+        float[] bias = new float[P * 3];
+        for (int p = 0; p < P; p++) {
+            for (int i = 0; i < 3; i++) { gyroMap[p * 3 + i] = Settings.gyroMap[p][i]; bias[p * 3 + i] = Settings.gyroBias[p][i]; }
+            for (int i = 0; i < Settings.REMAP_COUNT; i++) remap[p * Settings.REMAP_COUNT + i] = Settings.remap[p][i];
+        }
+        b.putIntArray("touchMode", Settings.touchMode.clone());
+        b.putBooleanArray("touchInvX", Settings.touchInvX.clone());
+        b.putBooleanArray("touchInvY", Settings.touchInvY.clone());
+        b.putBooleanArray("touchSwap", Settings.touchSwap.clone());
+        b.putIntArray("gyroGain", Settings.gyroGain.clone());
+        b.putIntArray("gyroInvert", Settings.gyroInvert.clone());
+        b.putIntArray("gyroDeadzone", Settings.gyroDeadzone.clone());
+        b.putIntArray("gyroMap", gyroMap);
+        b.putFloatArray("gyroBias", bias);
+        b.putBooleanArray("accelFollows", Settings.accelFollows.clone());
+        b.putIntArray("remap", remap);
+        b.putIntArray("lightR", Settings.lightR.clone());
+        b.putIntArray("lightG", Settings.lightG.clone());
+        b.putIntArray("lightB", Settings.lightB.clone());
+        b.putIntArray("brightness", Settings.brightness.clone());
+        b.putIntArray("playerLed", Settings.playerLed.clone());
+        return b;
+    }
+
+    private static int clampInt(int v, int lo, int hi) { return Math.max(lo, Math.min(hi, v)); }
+
+    /** One change from DroidDeck's tab, with the same effect as the same change on this app's own screen. */
+    private void applyRemote(Bundle d) {
+        if (d == null) return;
+        String key = d.getString("key", "");
+        int p = clampInt(d.getInt("p", 0), 0, Settings.PLAYERS - 1);
+        int i = d.getInt("i", 0);
+        int v = d.getInt("int", 0);
+        boolean on = d.getBoolean("bool", false);
+        switch (key) {
+            case "presentAs":
+                Settings.presentAs = clampInt(v, 0, Settings.PRESENT_NAMES.length - 1);
+                if (!Settings.isHookup()) Settings.lastPresentAs = Settings.presentAs;
+                Settings.save();
+                NativeBridge.applyHookup();
+                updateBubble();
+                break;
+            case "driverEnabled":
+                if (Settings.driverEnabled != on) toggleDriver();
+                break;
+            case "forceUsb":
+                Settings.forceUsb = on;
+                Settings.save();
+                NativeBridge.applyForce();
+                break;
+            case "pollMs":
+                Settings.pollMs = clampInt(v, 1, 16);
+                Settings.save();
+                NativeBridge.applyRate();
+                break;
+            case "bubble":
+                if (on && !android.provider.Settings.canDrawOverlays(this)) break;   // needs the permission first
+                Settings.bubble = on;
+                Settings.save();
+                if (on) showBubble(); else hideBubble();
+                break;
+            case "touchMode": Settings.touchMode[p] = clampInt(v, 0, 2); Settings.save(); break;
+            case "touchInvX": Settings.touchInvX[p] = on; Settings.save(); break;
+            case "touchInvY": Settings.touchInvY[p] = on; Settings.save(); break;
+            case "touchSwap": Settings.touchSwap[p] = on; Settings.save(); break;
+            case "gyroGain": Settings.gyroGain[p] = clampInt(v, 1, 800); Settings.save(); break;
+            case "gyroInvert": Settings.gyroInvert[p] = clampInt(v, 0, 7); Settings.save(); break;
+            case "gyroDeadzone": Settings.gyroDeadzone[p] = clampInt(v, 0, 50); Settings.save(); break;
+            case "gyroMap":
+                if (i >= 0 && i < 3) { Settings.gyroMap[p][i] = clampInt(v, 0, 2); Settings.save(); }
+                break;
+            case "accelFollows": Settings.accelFollows[p] = on; Settings.save(); break;
+            case "remap":
+                if (i >= 0 && i < Settings.REMAP_COUNT) { Settings.remap[p][i] = clampInt(v, 0, Settings.SRC_NAMES.length - 1); Settings.save(); }
+                break;
+            case "lightR": Settings.lightR[p] = clampInt(v, 0, 255); Settings.save(); NativeBridge.applyOutput(p); break;
+            case "lightG": Settings.lightG[p] = clampInt(v, 0, 255); Settings.save(); NativeBridge.applyOutput(p); break;
+            case "lightB": Settings.lightB[p] = clampInt(v, 0, 255); Settings.save(); NativeBridge.applyOutput(p); break;
+            case "brightness": Settings.brightness[p] = clampInt(v, 0, 100); Settings.save(); NativeBridge.applyOutput(p); break;
+            case "playerLed": Settings.playerLed[p] = clampInt(v, 0, 4); Settings.save(); NativeBridge.applyOutput(p); break;
+            case "calibrate": startCalibration(p); break;
+            case "resetCalibration":
+                synchronized (calibLock) { if (calibPlayer == p) calibPlayer = -1; }
+                Settings.gyroBias[p][0] = Settings.gyroBias[p][1] = Settings.gyroBias[p][2] = 0f;
+                Settings.save();
+                break;
+            default:
+                android.util.Log.w("SDL3Bridge", "settings: unknown key from DroidDeck: " + key);
+        }
     }
 
     private void sendOne(Messenger c, int what, Bundle b) {

@@ -233,3 +233,21 @@ Every input path keeps only fresh state waiting, never a growing line of old inp
 
 Simulated with a worker that is too slow: a plain queue was 5.3 s behind after 10 s of play; latest-wins stays
 within ~1 ms and keeps every button change.
+
+## SDL3Bridge tab in DroidDeck's Settings
+
+With a DroidDeck build from this fork, Settings has an **SDL3Bridge** tab:
+- Status: the bridge's status line, each connected controller (player, name, ids, battery), controllers handed to
+  Steam (hidraw node, fast path), the Steam Controller (2026) passthrough.
+- Controller mode: Present controller as (incl. Steam Native Hook-up), SDL3 driver on/off, controller source
+  (Auto / Forced USB), poll rate, floating bubble.
+- Per player (P1-P4): gyro speed, invert, axis remap, accelerometer follows, deadzone, calibration and reset;
+  touchpad layout, invert X/Y, swap; all 8 button remaps; lightbar red/green/blue, brightness, player LEDs.
+- **Open SDL3Bridge** for the controller test screen, USB access and USB audio.
+
+The tab has its own connection to the bridge (it never receives controller frames): it asks for the settings
+state once a second while open (MSG_SETTINGS_GET 40) and sends single changes (MSG_SETTINGS_SET 41); the bridge
+answers with everything, including the choice lists (MSG_SETTINGS 42), and applies a change exactly as its own
+screen does. The patcher adds the tab only if DroidDeck's settings widgets still have the signatures it was written
+against, so an upstream redesign leaves the tab out instead of breaking the build. (If the bridge's own screen is
+open while you change things in DroidDeck, it shows the new values after it is reopened.)
