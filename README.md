@@ -236,7 +236,8 @@ within ~1 ms and keeps every button change.
 
 ## SDL3Bridge tab in DroidDeck's Settings
 
-With a DroidDeck build from this fork, Settings has an **SDL3Bridge** tab:
+With a DroidDeck build from this fork, Setup has an **SDL3Bridge** tab, and the in-session drawer has the same
+**SDL3Bridge** page (USB icon, between Game profile and Session) to change things while playing:
 - Status: the bridge's status line, each connected controller (player, name, ids, battery), controllers handed to
   Steam (hidraw node, fast path), the Steam Controller (2026) passthrough.
 - Controller mode: Present controller as (incl. Steam Native Hook-up), SDL3 driver on/off, controller source
