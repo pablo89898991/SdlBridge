@@ -23,5 +23,5 @@ SDL3Bridge is for **every SDL3-supported controller** (USB or Bluetooth, any ven
 ## DroidDeck integration
 - Thin fork: every DroidDeck change is made by `droiddeck/patch-droiddeck.sh` (exact anchors; a feature is left
   out with a warning rather than breaking the build). Check changes against the newest upstream.
-- Plan for the merged app "DroidDeckSteamNativeHook": `newfork/PLAN.md` (README for its main page:
+- Plan for the merged app "SDLApiDroidDeck" (repo name): `newfork/PLAN.md` (README for its main page:
   `newfork/README.md`).

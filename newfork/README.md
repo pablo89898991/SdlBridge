@@ -1,7 +1,7 @@
-# DroidDeckSteamNativeHook
+# SDLApiDroidDeck
 
-**DroidDeck with Steam Native Hook-up built in.** One app that runs Steam on Android like DroidDeck does, plus
-full support for any controller SDL3 knows. Plug a controller in with USB-C, and Steam sees the **real
+**DroidDeck with SDL3 built in.** One app that runs Steam on Android like DroidDeck does, plus full support for
+any controller SDL3 knows, and Steam Native Hook-up. Plug a controller in with USB-C, and Steam sees the **real
 controller**, exactly as if it were plugged into a PC.
 
 > Unofficial fork of [DroidDeck](https://github.com/Droid-Deck/droiddeck). It is not made by or affiliated with

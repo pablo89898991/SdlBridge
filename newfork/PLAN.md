@@ -1,6 +1,7 @@
-# DroidDeckSteamNativeHook -- setup notes (to do after the hook-up latency fix)
+# SDLApiDroidDeck -- setup notes (to do after the hook-up latency fix)
 
-Things agreed for the new repo, kept here so they are not forgotten:
+The new repo combines SDL3Bridge with SDL3Deck. Its name is **SDLApiDroidDeck** (was going to be
+DroidDeckSteamNativeHook). Things agreed for it, kept here so they are not forgotten:
 
 0. **Every controller.** Whatever is fixed or added must work for all SDL3-supported controllers, never one
    vendor only (see `CLAUDE.md`). Copy `CLAUDE.md` into the new repo too.
@@ -15,5 +16,6 @@ Things agreed for the new repo, kept here so they are not forgotten:
 4. **Bridge settings** live in DroidDeck (Setup tab + session drawer page); the bridge's own screen stays as the
    controller test screen.
 5. **To decide when we start**: app ID -- keep `com.droiddeck.launcher` (replaces DroidDeck / SDL3Deck, keeps
-   data) or a new one (installs side by side, fresh setup).
+   data) or a new one (installs side by side, fresh setup); and the launcher label (SDL3Deck today, e.g.
+   SDLApiDroidDeck).
 6. **License**: GPLv3 like upstream; README says it is an unofficial fork (already in the README).
