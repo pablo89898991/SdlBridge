@@ -60,10 +60,7 @@ The controller is handed to Steam as itself instead of being re-presented as ano
 - **Switching**: double-tap the floating bubble, or pick it in *Present controller as*. Switching it off returns
   to your previous mode and SDL3 driver state.
 
-**Latest wins, for every controller.** Steam's read of the controller is answered from a mailbox that always holds
-the newest report, so even when Steam reads late it gets the current state instead of old reports. Which bits are
-buttons is learned from the reports themselves (and from the controller's HID descriptor), so it needs no
-per-controller layout. No press or release is ever lost, however short.
+**Steam always reads the newest state** (see [Low latency for every controller](#low-latency-for-every-controller)).
 
 **Fast path.** Reports from the controller are written straight into the shared hook-up memory by a
 high-priority thread, about 250 µs after the USB layer receives them, and Steam's reader is woken with a futex.
@@ -173,13 +170,32 @@ A draggable chat-head over any app:
 Shows the USB or headset audio outputs Android sees (for example the controller's own audio over USB-C), with
 a button for Android's media-output picker to switch between the controller and the phone.
 
+## Low latency for every controller
+
+Every controller node Steam reads, hooked-up or presented by DroidDeck (Steam Deck pad, DualSense / Edge,
+DualShock 4, Steam Controller 2015 / 2026), is answered from a mailbox at the moment Steam reads it, instead of a
+small queue whose newest reports were dropped when Steam read late:
+
+- **Steam takes everything waiting** (like SDL's update loop): it gets every report in order, the newest last, so
+  the current state arrives in that same read and gyro / touchpad keep all their samples.
+- **Steam takes one report at a time while it is busy**: it gets the newest one.
+- Which way Steam reads is learned while it runs. No press or release is ever skipped, however short: which bits
+  are buttons is learned from the reports themselves (and the controller's HID descriptor), so no per-controller
+  layout is needed.
+- Steam's controller threads (reading controllers, writing its virtual pad) run at a higher priority, like
+  Android's own input threads.
+
+In a simulation where Steam comes back only every 15-45 ms, a 15 ms tap on DroidDeck's Steam Deck pad reached
+Steam after 18-20 ms on average instead of 26 ms (13 vs 37 ms at 1000 Hz, 19 vs 159 ms when Steam reads one
+report at a time), with no taps lost instead of up to 4 in 10. When Steam reads in time nothing changes (~2 ms).
+
 ## Performance extras
 
 - **No lag build-up**:
   - frames are sent only when the controller changed
   - DroidDeck keeps the latest state per controller instead of a growing queue, so every button change is kept
     and stale stick/gyro frames are dropped
-  - Steam's hook-up nodes buffer only a few reports
+  - Steam reads the newest state of every controller (above)
 - **Poll rate** up to 1000 Hz.
 - **Game thread boost** (Android performance hints, ADPF): unlocked for any Android 12+ device, with a switch
   in Settings → Performance and in the drawer's Latency group.
@@ -189,10 +205,12 @@ a button for Android's media-output picker to switch between the controller and 
 
 | Line | Meaning |
 |---|---|
-| `latency: button press -> Steam's virtual pad` | Steam's own processing time for a press of a hooked-up Sony controller (avg / max every 10 s) |
+| `latency: button press waited for Steam to read it` | From a press reaching DroidDeck until Steam read it, any controller (avg / max every 10 s) |
+| `latency: Steam read a button press -> on Steam's virtual pad` | Steam's own processing of a press (gamepad mappings) |
 | `latency: Steam's virtual pad -> game read` | How long the game took to pick it up |
+| `hookup: … / deck: … reports/s, Steam read …` | Steam was slow to read a controller: how many reports it read, how late, and which way it reads |
 | `hookup: … the controller fell behind` | Steam sent output reports faster than the controller took them |
-| `hookup: … Steam read too slowly` | Steam did not read controller reports in time |
+| `thread N (…) now runs at higher priority` | One of Steam's controller threads was raised |
 | `bridge: input lag, last 10 s` | Bridge frames arrived late in DroidDeck |
 | `sdl3bridge: …` | The bridge's own log: hand-overs, fast path, engine start-up |
 
@@ -205,8 +223,8 @@ a button for Android's media-output picker to switch between the controller and 
   They keep working as a DroidDeck pad.
 - **In Hook-up mode** the per-player settings (remaps, gyro tuning, lightbar) don't apply, because Steam owns
   the controller. Configure it in Steam.
-- **Gamepad-mapped buttons in Hook-up mode** can lag on some setups. This is being investigated, and the
-  latency lines above show where the time goes.
+- **When the phone is fully loaded, Steam itself can still read controllers late.** Input now always reaches it as
+  the newest state, and the latency lines above show where any remaining time goes.
 
 ## How it is built
 
