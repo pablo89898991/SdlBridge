@@ -34,7 +34,8 @@ import org.libsdl.app.SDLControllerManager;
 
 /**
  * The bridge's screen: live controller test and settings. SDL3 itself runs in the background service
- * (SdlEngine), so this screen can open and close at any time without affecting the controllers.
+ * (SdlEngine), so this screen can open and close at any time without affecting the controllers. (Fallback, if
+ * SDL3 can't run in the background with this build: opening this screen starts SDL3 in a hidden screen behind it.)
  */
 public class BridgeActivity extends android.app.Activity implements NativeBridge.Listener {
     private interface IntSink { void set(int v); }
@@ -636,7 +637,14 @@ public class BridgeActivity extends android.app.Activity implements NativeBridge
 
     @Override protected void onPause() {
         super.onPause();
+        if (isFinishing()) running = false;
         keepControllerClaimed();
+    }
+
+    @Override public void onBackPressed() {
+        // Fallback only: SDL3 runs in a screen behind this one, and closing them would stop it -- step back instead.
+        if (SdlHostActivity.running) moveTaskToBack(true);
+        else super.onBackPressed();
     }
 
     @Override public void onWindowFocusChanged(boolean hasFocus) {

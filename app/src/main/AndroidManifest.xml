@@ -23,7 +23,7 @@
         <activity
             android:name=".BridgeActivity"
             android:exported="true"
-            android:launchMode="singleTask"
+            android:launchMode="singleTop"
             android:alwaysRetainTaskState="true"
             android:configChanges="layoutDirection|locale|orientation|uiMode|screenLayout|screenSize|smallestScreenSize|keyboard|keyboardHidden|navigation">
             <intent-filter>
@@ -32,15 +32,12 @@
             </intent-filter>
         </activity>
 
-        <!-- Fallback host for SDL3 when it can't run in the background service (see SdlEngine): invisible, never in
-             recents, kept in the background. -->
+        <!-- Fallback host for SDL3 when it can't run in the background service (see SdlEngine): transparent, opened
+             only from the bridge's screen, in the same task, behind it. (BridgeActivity is singleTop, not
+             singleTask: reopening the app must not close this screen.) -->
         <activity
             android:name=".SdlHostActivity"
             android:exported="false"
-            android:excludeFromRecents="true"
-            android:launchMode="singleTask"
-            android:taskAffinity="com.example.dsedge.sdl"
-            android:alwaysRetainTaskState="true"
             android:theme="@android:style/Theme.Translucent.NoTitleBar"
             android:configChanges="layoutDirection|locale|orientation|uiMode|screenLayout|screenSize|smallestScreenSize|keyboard|keyboardHidden|navigation" />
 

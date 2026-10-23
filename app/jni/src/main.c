@@ -527,7 +527,9 @@ static void map_unmapped_joystick(SDL_JoystickID id)
 
 int main(int argc, char *argv[])
 {
-    (void)argc; (void)argv;
+    /* argv[1]: SDL3's gamepad mappings file (absolute path, made by the app). Without it SDL3 looks the file up
+     * through the app screen's assets -- headless there is no screen, and that lookup crashes the app. */
+    if (argc > 1 && argv[1] && argv[1][0] == '/') SDL_SetHint(SDL_HINT_GAMECONTROLLERCONFIG_FILE, argv[1]);
     SDL_SetHint(SDL_HINT_JOYSTICK_ALLOW_BACKGROUND_EVENTS, "1");
     SDL_SetHint(SDL_HINT_JOYSTICK_ENHANCED_REPORTS, "1");
     SDL_SetHint(SDL_HINT_ANDROID_BLOCK_ON_PAUSE, "0");

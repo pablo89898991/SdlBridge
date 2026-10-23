@@ -731,7 +731,6 @@ public class BridgeService extends Service implements NativeBridge.Listener {
         } catch (RemoteException e) { clients.remove(c); clientCount = clients.size(); }
     }
 
-    /** The SDL3 loop runs in the bridge screen; if Android closed it, start it again in the background. */
     /** SDL3's loop must run for controllers to work: it runs in this service, no screen needed. */
     private void ensureBridgeLoop() {
         SdlEngine.start(this);
