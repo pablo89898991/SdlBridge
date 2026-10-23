@@ -210,7 +210,12 @@ With a DroidDeck build from this fork, Steam Native Hook-up skips every hop it c
   thread receiving it and writes it straight into Steam's FIFO in that file, waking Steam's reader with a futex
   (before: once per main-loop pass, then Java, a Binder message per report, DroidDeck's app, and Steam's side
   checking every 500 us).
-- Steam's output reports (rumble, lights) and feature reads are served from the same file by the bridge.
+- Steam's output reports (rumble, lights) and feature reads are served from the same file by the bridge's own
+  writer thread, the moment Steam queues them (checked every 500 us; before: once per main-loop pass, one USB
+  write after another, so under heavy rumble Steam's queue filled up and Steam had to wait for room). On Steam's
+  side such a wait no longer holds the hook's controller lock (it held up Steam's virtual pad and reads), and an
+  output report waits at most 4 ms -- if the controller can't take them that fast, the newest is dropped (the
+  next one carries the current rumble / light state again).
 - DroidDeck still owns the controller list and its sysfs description; while the bridge serves a slot it keeps a
   heartbeat in the file and DroidDeck leaves that slot alone. If the fast path is unavailable (older DroidDeck,
   file not mappable), everything falls back to messages automatically.
@@ -234,6 +239,18 @@ Every input path keeps only fresh state waiting, never a growing line of old inp
 
 Simulated with a worker that is too slow: a plain queue was 5.3 s behind after 10 s of play; latest-wins stays
 within ~1 ms and keeps every button change.
+
+## Latency meter (pad.log)
+
+Where a button press of a hooked-up controller spends its time, logged every 10 s while there are presses:
+- `latency: button press -> Steam's virtual pad: N presses, avg X ms, max Y ms` (Steam process): from the report
+  being handed to Steam to Steam writing the mapped gamepad button on its virtual pad -- Steam's own processing.
+  (Sony controllers: DualSense / Edge, DualShock 4.)
+- `latency: Steam's virtual pad -> game read: ...` (game process): from Steam writing it to the game reading it.
+- `hookup: /dev/hidraw24: ... the controller fell behind: waited X ms for room, dropped N output reports` when
+  Steam sent output reports faster than the controller took them; `hookup: report 0xNN read took X ms` for a slow
+  feature read (Steam waits for those).
+Mouse / keyboard output from Steam does not go through the virtual pad, so it is in neither number.
 
 ## SDL3Bridge tab in DroidDeck's Settings
 

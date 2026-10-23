@@ -42,11 +42,15 @@ static jmethodID g_hk_added, g_hk_input, g_hk_removed, g_hk_reply, g_hk_prefetch
  * or releases a controller, so neither disappears under the reader. */
 static HkShm g_hks = { NULL, -1, 0 };
 static pthread_mutex_t g_hk_io = PTHREAD_MUTEX_INITIALIZER;
+/* Held by the writer thread while it uses the controllers (its USB writes can take a few ms, so not under g_hk_io);
+ * releasing a controller takes it first. Order: g_hk_wr, then g_hk_io. */
+static pthread_mutex_t g_hk_wr = PTHREAD_MUTEX_INITIALIZER;
+static _Atomic int g_hk_writer_started;
 static _Atomic int g_hk_gone[HOOKUP_SLOTS];        /* reader saw the controller go away; SDL thread closes it */
 static _Atomic int g_hk_reader_started;
 static _Atomic int g_hk_fast_now[HOOKUP_SLOTS];    /* slot currently served through the shared file */
 static int g_hk_fast_logged[HOOKUP_SLOTS];          /* SDL thread: last fast/slow state logged per slot */
-static uint64_t g_hk_get_last[HOOKUP_SLOTS];        /* SDL thread: last feature read taken from the file */
+static uint64_t g_hk_get_last[HOOKUP_SLOTS];        /* writer thread: last feature read taken from the file */
 static Uint64 g_hk_alive_ms;
 
 /* Logged to logcat AND sent to DroidDeck, which writes it into the session's pad.log ("sdl3bridge: ..."). */
@@ -199,12 +203,14 @@ static void hk_close(JNIEnv *env, int i, const char *why)
 {
     if (!g_hk[i].dev) return;
     hk_log(env, "hookup: slot %d %04x:%04x released (%s)", i, g_hk[i].vid, g_hk[i].pid, why);
-    pthread_mutex_lock(&g_hk_io);          /* the reader thread is not inside a pass now, and won't see it again */
+    pthread_mutex_lock(&g_hk_wr);          /* the writer thread is not using it now, and won't see it again */
+    pthread_mutex_lock(&g_hk_io);          /* nor is the reader thread */
     SDL_hid_device *dev = g_hk[i].dev;
     memset(&g_hk[i], 0, sizeof(g_hk[i]));
     atomic_store(&g_hk_gone[i], 0);
     atomic_store(&g_hk_fast_now[i], 0);
     pthread_mutex_unlock(&g_hk_io);
+    pthread_mutex_unlock(&g_hk_wr);
     g_hk_fast_logged[i] = 0;
     SDL_hid_close(dev);
     if (g_hk_removed) (*env)->CallStaticVoidMethod(env, g_cls, g_hk_removed, (jint)i);
@@ -261,48 +267,82 @@ static int SDLCALL hk_reader(void *unused)
     return 0;
 }
 
+/*
+ * Writer thread: Steam's output reports (rumble, lights, settings) and feature reads for the slots the bridge
+ * serves through the shared file, sent to the controller as soon as Steam queues them (checked every 500 us).
+ * Each USB write takes a few ms; done in the SDL main loop they waited for its next pass and for each other,
+ * so under heavy rumble Steam's queue filled up and Steam had to wait for room.
+ */
+static int SDLCALL hk_writer(void *unused)
+{
+    (void)unused;
+    setpriority(PRIO_PROCESS, (id_t)syscall(SYS_gettid), -10);
+    for (;;) {
+        int did = 0, any = 0;
+        pthread_mutex_lock(&g_hk_wr);
+        for (int i = 0; i < HOOKUP_SLOTS; i++) {
+            HksOut outs[16];
+            int nout = 0, want_get = 0, report_id = 0, input = 0, length = 0;
+            uint64_t request = 0;
+            pthread_mutex_lock(&g_hk_io);
+            SDL_hid_device *dev = g_hk[i].dev;
+            if (dev && !atomic_load(&g_hk_gone[i]) && hks_owns(&g_hks, i, g_hk[i].vid, g_hk[i].pid)) {
+                nout = hks_take_out(&g_hks, i, outs, (int)SDL_arraysize(outs));
+                want_get = hks_get_pending(&g_hks, i, &g_hk_get_last[i], &request, &report_id, &input, &length);
+            }
+            pthread_mutex_unlock(&g_hk_io);
+            if (!dev) continue;
+            any = 1;
+            for (int k = 0; k < nout; k++) {
+                if (outs[k].kind == 1) SDL_hid_send_feature_report(dev, outs[k].data, (size_t)outs[k].len);
+                else SDL_hid_write(dev, outs[k].data, (size_t)outs[k].len);
+            }
+            if (want_get) {
+                Uint8 buf[HOOKUP_REPORT_MAX + 1] = { 0 };
+                buf[0] = (Uint8)report_id;
+                int n = input ? SDL_hid_get_input_report(dev, buf, (size_t)length)
+                              : SDL_hid_get_feature_report(dev, buf, (size_t)length);
+                pthread_mutex_lock(&g_hk_io);
+                if (hks_owns(&g_hks, i, g_hk[i].vid, g_hk[i].pid)) hks_get_reply(&g_hks, i, request, buf, n);
+                pthread_mutex_unlock(&g_hk_io);
+            }
+            did += nout + want_get;
+        }
+        pthread_mutex_unlock(&g_hk_wr);
+        if (!did) {
+            struct timespec t = { 0, any ? 500000L : 20000000L };
+            nanosleep(&t, NULL);
+        }
+    }
+    return 0;
+}
+
 static void hk_start_reader(void)
 {
+    if (!atomic_exchange(&g_hk_writer_started, 1)) {
+        SDL_Thread *w = SDL_CreateThread(hk_writer, "hookup-writer", NULL);
+        if (w) SDL_DetachThread(w);
+        else atomic_store(&g_hk_writer_started, 0);
+    }
     if (atomic_exchange(&g_hk_reader_started, 1)) return;
     SDL_Thread *t = SDL_CreateThread(hk_reader, "hookup-reader", NULL);
     if (t) SDL_DetachThread(t);
     else atomic_store(&g_hk_reader_started, 0);
 }
 
-/* SDL thread, every loop: Steam's output reports and feature reads for the slots the bridge serves directly. */
+/* SDL thread, every loop: the heartbeat that tells DroidDeck and Steam's side the bridge serves the slot itself. */
 static void hk_serve_fast(JNIEnv *env)
 {
     uint64_t now = hks_now_ms();
     for (int i = 0; i < HOOKUP_SLOTS; i++) {
-        SDL_hid_device *dev = g_hk[i].dev;
-        if (!dev) continue;
-        HksOut outs[16];
-        int nout = 0, want_get = 0, report_id = 0, input = 0, length = 0, fast;
-        uint64_t request = 0;
+        if (!g_hk[i].dev) continue;
         pthread_mutex_lock(&g_hk_io);
-        fast = hks_owns(&g_hks, i, g_hk[i].vid, g_hk[i].pid);
-        if (fast) {
-            hks_heartbeat(&g_hks, i, now);
-            nout = hks_take_out(&g_hks, i, outs, (int)SDL_arraysize(outs));
-            want_get = hks_get_pending(&g_hks, i, &g_hk_get_last[i], &request, &report_id, &input, &length);
-        }
+        int fast = hks_owns(&g_hks, i, g_hk[i].vid, g_hk[i].pid);
+        if (fast) hks_heartbeat(&g_hks, i, now);
         pthread_mutex_unlock(&g_hk_io);
         if (fast != g_hk_fast_logged[i]) {
             g_hk_fast_logged[i] = fast;
             if (fast) hk_log(env, "hookup: slot %d served through shared memory (fast path)", i);
-        }
-        for (int k = 0; k < nout; k++) {
-            if (outs[k].kind == 1) SDL_hid_send_feature_report(dev, outs[k].data, (size_t)outs[k].len);
-            else SDL_hid_write(dev, outs[k].data, (size_t)outs[k].len);
-        }
-        if (want_get) {
-            Uint8 buf[HOOKUP_REPORT_MAX + 1] = { 0 };
-            buf[0] = (Uint8)report_id;
-            int n = input ? SDL_hid_get_input_report(dev, buf, (size_t)length)
-                          : SDL_hid_get_feature_report(dev, buf, (size_t)length);
-            pthread_mutex_lock(&g_hk_io);
-            if (hks_owns(&g_hks, i, g_hk[i].vid, g_hk[i].pid)) hks_get_reply(&g_hks, i, request, buf, n);
-            pthread_mutex_unlock(&g_hk_io);
         }
     }
 }
