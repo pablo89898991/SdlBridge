@@ -1527,5 +1527,14 @@ else
   warn "session drawer files or the SDL3Bridge tab not found (skipping the drawer page)"
 fi
 
+# ---------- 24. The fork's own README (only when one is shipped next to this script) ----------
+# Upstream's README comes back with every sync; a fork that keeps its own README as sdl3/README.md gets it put
+# back at the root of the build branch. (No README next to the script = nothing changes.)
+if [ -f "$SRC/README.md" ]; then
+  if cmp -s "$SRC/README.md" "$DD/README.md"; then skip "fork README"
+  else cp "$SRC/README.md" "$DD/README.md" && ok "fork README installed at the root"
+  fi
+fi
+
 echo
 echo "Done. Review with:  cd \"$DD\" && git diff"
