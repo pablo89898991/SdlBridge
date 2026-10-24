@@ -299,6 +299,16 @@ Simulated with a Steam that comes back only every 15-45 ms, press to Steam (15 m
 | Hooked-up controller, Steam takes one at a time | (first mailbox: avg 25-35 ms, max 320-460) | avg 15 ms, max 42 |
 | Steam reading in time | 2.2 ms | 1.8 ms (unchanged) |
 
+## Steam Input mouse clicks reach games (every controller)
+
+Since upstream DroidDeck's Remote Play host (21 Oct, #1139), its preload library `libblsession.so` (loaded into
+every process) wraps `XTestFakeButtonEvent` / `XTestFakeMotionEvent` for Remote Play touch and finds the real
+functions with `dlsym(RTLD_NEXT)`. Steam's client library links libXtst privately, so from a preload there is no
+"next" one: every mouse click Steam Input sent was dropped. A button bound to a mouse click did nothing in any
+game, with any controller and in every mode, while keys and relative mouse movement (gyro / joystick mouse, other
+XTest calls) still worked. The patcher (step 28) makes that shim take the real functions from libXtst itself when
+they are not next in line. Reproduced and verified with upstream's own library in a stand-in for Steam's loading.
+
 ## Controller-driven mouse works out of the box
 
 DroidDeck's Performance page has "Draw the cursor inside gamescope" (Session fixes), which upstream leaves off to

@@ -200,6 +200,9 @@ report at a time), with no taps lost instead of up to 4 in 10. When Steam reads 
 - **Game thread boost** (Android performance hints, ADPF): unlocked for any Android 12+ device, with a switch
   in Settings → Performance and in the drawer's Latency group.
 - **Steam started with `+controller_rate 500`**.
+- **Steam Input mouse clicks reach games**: upstream's Remote Play touch shim dropped every mouse click Steam
+  sends (it couldn't find the real XTest function, which Steam loads privately). Fixed for every controller and
+  mode; keys and mouse movement were never affected.
 - **Controller-driven mouse works out of the box**: "Draw the cursor inside gamescope" (Performance -> Session
   fixes) starts on, so buttons bound to mouse clicks in Steam Input work. Turn it off for a little more speed if
   you never use controller mouse bindings.

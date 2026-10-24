@@ -25,5 +25,9 @@ SDL3Bridge is for **every SDL3-supported controller** (USB or Bluetooth, any ven
   out with a warning rather than breaking the build). Check changes against the newest upstream.
 - Upstream's CI sometimes downloads pinned files from the release of the repo being built (`$GITHUB_REPOSITORY`).
   The fork has no such releases: fetch them from upstream's release instead (keeping upstream's SHA-256 check).
+- Wrapping a library function from a preload (`LD_PRELOAD` / `/etc/ld.so.preload`): never rely on
+  `dlsym(RTLD_NEXT)` alone. Steam's client links libXtst (and others) privately, so RTLD_NEXT finds nothing and
+  the call is silently dropped; fall back to `dlopen("<soname>", RTLD_NOLOAD)` + `dlsym(handle)`. Test it with a
+  library loaded via `dlopen(RTLD_LOCAL)`.
 - Plan for the merged app "SDLApiDroidDeck" (repo name): `newfork/PLAN.md` (README for its main page:
   `newfork/README.md`).
