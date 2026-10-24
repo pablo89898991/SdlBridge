@@ -320,6 +320,20 @@ save a compositor plane. With it off, Steam Input's mouse output from a controll
 a mouse click does nothing (keyboard bindings and mouse movement still work). SDL3Deck starts it ON; the switch is
 still there to turn it off.
 
+## Hook-up follows the Poll rate (every controller)
+
+In Steam Native Hook-up the controller's own reports go to Steam as they come: a DualSense over USB sends about
+1000 a second. Steam updates its virtual pad as often, and a Windows game gets each update passed along, one by
+one, inside Wine -- under x86 emulation that hand-off can fall behind and the game lags, while every step up to
+the game reading the virtual pad measures 1-3 ms. DroidDeck's own pads (Steam Deck, DualSense / Edge, ...) make
+250 reports a second and don't lag. So Hook-up now follows the bridge's **Poll rate** (250 / 500 / 1000 Hz,
+default 500): Steam is told there is something to read at most that often and then gets the newest report --
+a short press still reaches it, in order. 1000 Hz = every report, as before. The bridge publishes its rate in the
+shared file (`rate_hz`); older builds of either side simply run unpaced. Simulated with a 1000 Hz controller at
+250 Hz: Steam reads 261 reports/s instead of 995, presses reach it after 2.1 ms on average (0.3 unpaced), no tap
+lost, also when Steam is busy. pad.log: `hookup: /dev/hidrawN: Steam gets the newest report 250 times a second`,
+and `latency: Steam updates its virtual pad N times a second`.
+
 ## Steam's controller threads at higher priority
 
 Inside Steam, the threads that read controllers (hooked-up ones and DroidDeck's own pads -- every controller), the

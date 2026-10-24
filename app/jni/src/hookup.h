@@ -370,7 +370,11 @@ static void hk_serve_fast(JNIEnv *env)
         if (!g_hk[i].dev) continue;
         pthread_mutex_lock(&g_hk_io);
         int fast = hks_owns(&g_hks, i, g_hk[i].vid, g_hk[i].pid);
-        if (fast) hks_heartbeat(&g_hks, i, now);
+        if (fast) {
+            hks_heartbeat(&g_hks, i, now);
+            int ms = atomic_load(&g_poll_ms);
+            hks_set_rate(&g_hks, i, ms > 0 ? (uint32_t)(1000 / ms) : 0u);   /* Poll rate also paces Hook-up */
+        }
         pthread_mutex_unlock(&g_hk_io);
         if (fast != g_hk_fast_logged[i]) {
             g_hk_fast_logged[i] = fast;

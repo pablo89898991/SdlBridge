@@ -41,6 +41,7 @@ enum {
     HKS_GET_LENGTH = 388,
     HKS_GET = 392,
     HKS_DIRECT_MS = 520,
+    HKS_RATE_HZ = 528,     /* the bridge's poll rate: Steam's side hands Steam at most this many reports a second */
     HKS_IN = 5120,
     HKS_OUT = 41984,
     HKS_IN_FIFO = 256,
@@ -130,6 +131,12 @@ static inline int hks_owns(const HkShm *m, int i, uint16_t vid, uint16_t pid)
 static inline void hks_heartbeat(const HkShm *m, int i, uint64_t now_ms)
 {
     __atomic_store_n(hks_u64(hks_slot(m, i), HKS_DIRECT_MS), now_ms, __ATOMIC_RELEASE);
+}
+
+/* The rate Steam's side hands this slot's reports to Steam (the bridge's Poll rate setting; 0 = every report). */
+static inline void hks_set_rate(const HkShm *m, int i, uint32_t hz)
+{
+    __atomic_store_n(hks_u32(hks_slot(m, i), HKS_RATE_HZ), hz, __ATOMIC_RELEASE);
 }
 
 /* One input report (controller -> Steam): same protocol as HookupBridge.input(), then wake Steam's reader. */
