@@ -2129,5 +2129,56 @@ PY
   esac
 fi
 
+# ---------- 31. proot's talloc source: other places to get the same file ----------
+# A build without its proot cache (a new repo, or new proot sources) downloads talloc from www.samba.org, which
+# GitHub's runners sometimes can't reach ("curl: (56) Connection died"): the whole build then fails. The same file
+# is also on samba.org's download server and in Alpine's and Debian's source archives; each is tried in turn and
+# must still match upstream's SHA-256, so the build gets exactly the same talloc.
+PBS="$DD/tools/proot/build.sh"
+if [ -f "$PBS" ]; then
+  res=$(python3 - "$PBS" <<'PY'
+import sys
+p = sys.argv[1]
+s = open(p, encoding='utf-8').read()
+if 'sdl3deck: other sources' in s:
+    print("SKIP"); sys.exit(0)
+edits = [
+    ('''fetch() {
+  curl -fsSL --retry 3 -o "$WORK/$1" "$2"
+  echo "$3  $WORK/$1" | shasum -a 256 -c -
+''', '''fetch() {
+  # sdl3deck: other sources of the same file ($4, space separated), tried in turn; each must match the SHA-256
+  local url fetched=
+  for url in "$2" ${4:-}; do
+    if curl -fsSL --retry 3 -o "$WORK/$1" "$url" && echo "$3  $WORK/$1" | shasum -a 256 -c -; then
+      fetched=1
+      break
+    fi
+    echo "$1: $url failed or did not match its SHA-256; trying the next source" >&2
+  done
+  [ -n "$fetched" ] || { echo "$1: no source worked" >&2; exit 1; }
+'''),
+    ('''fetch talloc.tar.gz "https://www.samba.org/ftp/talloc/talloc-${TALLOC_VERSION}.tar.gz" "$TALLOC_SHA256"
+''', '''fetch talloc.tar.gz "https://www.samba.org/ftp/talloc/talloc-${TALLOC_VERSION}.tar.gz" "$TALLOC_SHA256" \\
+  "https://download.samba.org/pub/talloc/talloc-${TALLOC_VERSION}.tar.gz https://distfiles.alpinelinux.org/distfiles/edge/talloc-${TALLOC_VERSION}.tar.gz https://deb.debian.org/debian/pool/main/t/talloc/talloc_${TALLOC_VERSION}.orig.tar.gz"
+'''),
+]
+for old, new in edits:
+    if s.count(old) != 1:
+        sys.stderr.write("ANCHOR-MISS tools/proot/build.sh :: %r (found %d)\n" % (old[:50], s.count(old)))
+        sys.exit(3)
+for old, new in edits:
+    s = s.replace(old, new, 1)
+open(p, 'w', encoding='utf-8').write(s)
+print("OK")
+PY
+)
+  case "$res" in
+    OK) ok "proot build: talloc from other sources too when samba.org can't be reached (same SHA-256)" ;;
+    SKIP) skip "proot build: talloc sources" ;;
+    *) warn "proot build left as upstream (tools/proot/build.sh changed, see ANCHOR-MISS above)" ;;
+  esac
+fi
+
 echo
 echo "Done. Review with:  cd \"$DD\" && git diff"
