@@ -1,21 +1,34 @@
-# SDLApiDroidDeck -- setup notes (to do after the hook-up latency fix)
+# SDLApiDroidDeck -- the merged app (SDL3DroidDeck)
 
-The new repo combines SDL3Bridge with SDL3Deck. Its name is **SDLApiDroidDeck** (was going to be
-DroidDeckSteamNativeHook). Things agreed for it, kept here so they are not forgotten:
+The repo **SDLApiDroidDeck** builds one APK, **SDL3DroidDeck**: upstream DroidDeck + the SDL3Deck patch + the
+SDL3Bridge app built in. Decided with the owner:
 
-0. **Every controller.** Whatever is fixed or added must work for all SDL3-supported controllers, never one
-   vendor only (see `CLAUDE.md`). Copy `CLAUDE.md` into the new repo too.
+0. **Every controller.** Whatever is fixed or added must work for all SDL3-supported controllers, never one vendor
+   only (see `CLAUDE.md`).
+1. **App ID stays `com.droiddeck.launcher`**: installs over SDL3Deck / DroidDeck and keeps the games and data.
+   Signing: upstream's workflow signs with the committed AOSP test key on every branch but main (the release
+   re-signing job only runs on upstream's main) -- the same key SDL3Deck builds have. Never build on `main` there.
+2. **Launcher label: SDL3DroidDeck** (`SDL3_APP_LABEL`, step 6).
+3. **README on the main page**: `newfork/README.md` -> `README.md` on `main`; the sync also puts it on the build
+   branch.
 
-1. **README on the main page.** `newfork/README.md` goes to the ROOT of the new repo's default branch (`main`) as
-   `README.md` -- that is what GitHub shows on the repo's main page. The daily sync never touches `main` (it only
-   writes the build branch), so it stays.
-2. **README on the build branch too.** Also copy it to `sdl3/README.md` on the build branch: the patcher
-   (step 24) then puts it at that branch's root after every upstream overlay, instead of upstream's README.
-3. **One APK**: DroidDeck + SDL3 + the bridge, applied by the patcher on top of the newest upstream (thin fork,
-   daily auto-sync kept). The bridge runs in its own process inside the app (`android:process=":sdl3"`).
-4. **Bridge settings** live in DroidDeck (Setup tab + session drawer page); the bridge's own screen stays as the
-   controller test screen.
-5. **To decide when we start**: app ID -- keep `com.droiddeck.launcher` (replaces DroidDeck / SDL3Deck, keeps
-   data) or a new one (installs side by side, fresh setup); and the launcher label (SDL3Deck today, e.g.
-   SDLApiDroidDeck).
-6. **License**: GPLv3 like upstream; README says it is an unofficial fork (already in the README).
+## How it is put together
+
+- `main`: `README.md`, `LICENSE` (upstream's GPLv3), `.github/workflows/sync.yml` (= `newfork/sync.yml`) and
+  `.github/workflows/build.yml` (= `newfork/build.yml`, a stub so "Build APK" can be dispatched on the build branch).
+- Build branch `sdl3droiddeck`: filled by the sync -- newest upstream, then
+  `SDL3_EMBED_BRIDGE=1 SDL3_APP_LABEL=SDL3DroidDeck bash SdlBridge/droiddeck/patch-droiddeck.sh .` from a fresh
+  clone of SdlBridge. Nothing of SdlBridge is copied into SDLApiDroidDeck by hand: push to SdlBridge, run the sync.
+- Step 30 of the patcher (only with `SDL3_EMBED_BRIDGE=1`): SDL3 source from its pinned release (`droiddeck/sdl3.env`,
+  SHA-256) into `app/src/main/cpp/sdl3bridge/SDL` + its Android Java classes; the bridge's native loop
+  (`libmain.so`) and Java (`com.example.dsedge`, unchanged package) and resources (`sdl3_*`); manifest entries with
+  `android:process=":sdl3"`; `App.kt` skips DroidDeck's set-up in that process; SDL3 leaves Bluetooth to DroidDeck.
+- Runtime: `DualSenseBridge.bridgePackage()` / `SdlBridgeLink` use the bridge in the app's own package when it is
+  there, else the separate SDL3Bridge app (SDL3Deck keeps working as before). The bridge notices it is built in
+  (`Host.java`): own preference names, no update check of its own.
+- The separate SDL3Bridge app and SDL3Deck stay buildable as before (SDL3Deck = no `SDL3_EMBED_BRIDGE`).
+
+## Moving to it
+
+Install over SDL3Deck, uninstall the separate SDL3Bridge app, set the bridge's settings again (Settings ->
+SDL3Bridge), allow USB access once.

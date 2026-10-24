@@ -85,6 +85,22 @@ Note: this edits DroidDeck's SOURCE before you build it. An installed app cannot
 APK on a non-rooted phone (a re-signed APK no longer matches DroidDeck's signature), so the integration
 has to be compiled into DroidDeck.
 
+## SDL3DroidDeck: the bridge built into DroidDeck (one APK)
+
+The repo **SDLApiDroidDeck** builds **SDL3DroidDeck**: DroidDeck with this bridge built in, so one app does
+everything. Its daily sync (`newfork/sync.yml`) takes the newest upstream DroidDeck and runs this repo's patcher with
+the bridge built in:
+
+    SDL3_EMBED_BRIDGE=1 SDL3_APP_LABEL=SDL3DroidDeck bash droiddeck/patch-droiddeck.sh ~/DroidDeck
+
+Step 30 then adds SDL3 (its release pinned in `droiddeck/sdl3.env`, SHA-256 checked) and the bridge's native code,
+Java and resources to DroidDeck's build, and declares the bridge's screen, service and USB handler in DroidDeck's
+manifest in their own process (`:sdl3`), as the separate app was. DroidDeck finds the bridge in its own package
+(`DualSenseBridge.bridgePackage()`); the bridge notices it is built in (`Host.java`: its own preference names, no
+update check -- it updates with the app). The app ID stays `com.droiddeck.launcher`, so it installs over SDL3Deck
+with games and settings kept. Without `SDL3_EMBED_BRIDGE` nothing changes: SDL3Deck plus this separate app, as
+before. Setup and moving over: `newfork/README.md`, `newfork/PLAN.md`.
+
 ## Auto-updating DroidDeck (droiddeck/sync-upstream.yml)
 
 For a DroidDeck APK that always tracks latest upstream with the bridge baked in, see

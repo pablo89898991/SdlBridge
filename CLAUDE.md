@@ -17,6 +17,9 @@ SDL3Bridge is for **every SDL3-supported controller** (USB or Bluetooth, any ven
 - Commit BEFORE `git pull --rebase` (git refuses to pull with uncommitted changes).
 - SDL3Deck: the sync bot commits to `sdl3deck` daily, so start from
   `git fetch origin && git reset --hard origin/sdl3deck`, then copy the `droiddeck/` files into `sdl3/`.
+- SDLApiDroidDeck (the merged app, SDL3DroidDeck): its `main` holds only README / LICENSE / workflows; its sync
+  takes the bridge and the patcher straight from this repo (`SDL3_EMBED_BRIDGE=1`, step 30), so changes go here.
+  Never let it build on `main` (upstream's release-signing job runs there).
 - Commit messages end with the attribution lines this session's instructions give.
 - Never push to upstream Droid-Deck/droiddeck. Delete temporary upstream clones after use.
 
@@ -36,5 +39,7 @@ SDL3Bridge is for **every SDL3-supported controller** (USB or Bluetooth, any ven
   program among others, may not be running, and may be the x86-64 client under FEX. There the Steam client, games
   Steam starts and other desktop programs each see different controller nodes (step 29, `FAKE_EVDEV_DESKTOP`), and
   Hook-up waits for the Steam client's heartbeat. Check a controller change in both kinds of session.
-- Plan for the merged app "SDLApiDroidDeck" (repo name): `newfork/PLAN.md` (README for its main page:
-  `newfork/README.md`).
+- The merged app "SDLApiDroidDeck" (repo name; app label SDL3DroidDeck, app ID com.droiddeck.launcher):
+  `newfork/PLAN.md`, its workflows `newfork/sync.yml` + `newfork/build.yml`, README `newfork/README.md`. The bridge
+  runs there in the app's `:sdl3` process; bridge code must keep working both built in and as its own app
+  (`Host.embedded()` on the bridge side, `DualSenseBridge.bridgePackage()` on DroidDeck's).

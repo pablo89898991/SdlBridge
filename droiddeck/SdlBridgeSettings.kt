@@ -39,8 +39,10 @@ import kotlinx.coroutines.delay
  * The bridge sends the choices too (mode names, button names, ...), so nothing here has to match its lists.
  */
 internal object SdlBridgeLink {
-    private const val PKG = "com.example.dsedge"
     private const val ACTION = "com.example.dsedge.BRIDGE"
+    private const val SCREEN = "com.example.dsedge.BridgeActivity"
+    // the bridge built into this app (SDL3DroidDeck), else the separate SDL3Bridge app
+    private fun pkg(ctx: Context) = com.droiddeck.launcher.input.DualSenseBridge.bridgePackage(ctx)
     private const val MSG_SETTINGS_GET = 40
     private const val MSG_SETTINGS_SET = 41
     private const val MSG_SETTINGS = 42
@@ -65,13 +67,13 @@ internal object SdlBridgeLink {
         override fun onServiceDisconnected(n: ComponentName) { server = null }
     }
 
-    fun installed(ctx: Context): Boolean = try { ctx.packageManager.getPackageInfo(PKG, 0); true } catch (_: Exception) { false }
+    fun installed(ctx: Context): Boolean = try { ctx.packageManager.getPackageInfo(pkg(ctx), 0); true } catch (_: Exception) { false }
 
     fun start(ctx: Context) {
         users++
         if (bound) return
         bound = try {
-            ctx.applicationContext.bindService(Intent(ACTION).setPackage(PKG), conn, Context.BIND_AUTO_CREATE)
+            ctx.applicationContext.bindService(Intent(ACTION).setPackage(pkg(ctx)), conn, Context.BIND_AUTO_CREATE)
         } catch (_: Exception) { false }
     }
 
@@ -99,9 +101,13 @@ internal object SdlBridgeLink {
         })
     }
 
+    /** The bridge's own screen (controller test, USB access, ...): in this app when built in, else SDL3Bridge. */
     fun open(ctx: Context) {
-        val launch = ctx.packageManager.getLaunchIntentForPackage(PKG) ?: return
-        try { ctx.startActivity(launch.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)) } catch (_: Exception) {}
+        val screen = Intent().setClassName(pkg(ctx), SCREEN).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+        try { ctx.startActivity(screen) } catch (_: Exception) {
+            val launch = ctx.packageManager.getLaunchIntentForPackage(pkg(ctx)) ?: return
+            try { ctx.startActivity(launch.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)) } catch (_: Exception) {}
+        }
     }
 
     private fun send(m: Message) {

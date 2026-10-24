@@ -1,14 +1,14 @@
 # SDLApiDroidDeck
 
-**DroidDeck with SDL3 built in.** One app that runs Steam on Android like DroidDeck does, plus full support for
-any controller SDL3 knows, and Steam Native Hook-up. Plug a controller in with USB-C, and Steam sees the **real
-controller**, exactly as if it were plugged into a PC.
+**DroidDeck with SDL3 built in.** One app, **SDL3DroidDeck**, that runs Steam on Android like DroidDeck does, plus
+full support for any controller SDL3 knows, and Steam Native Hook-up. Plug a controller in with USB-C, and Steam
+sees the **real controller**, exactly as if it were plugged into a PC.
 
 > Unofficial fork of [DroidDeck](https://github.com/Droid-Deck/droiddeck). It is not made by or affiliated with
 > the DroidDeck project. It tracks upstream DroidDeck automatically and adds the features below on top.
 
-> **Status:** this repo combines the SDL3Deck fork (DroidDeck plus a patch) with the SDL3Bridge app into one
-> APK. Until the merge is finished, the same features come as two apps: SDL3Deck and SDL3BridgeDroidDeck.
+> One APK: the SDL3Deck fork (DroidDeck plus a patch) and the SDL3Bridge app combined. It keeps DroidDeck's app ID
+> (`com.droiddeck.launcher`), so it installs over SDL3Deck or DroidDeck **with your games and settings kept**.
 
 ---
 
@@ -259,6 +259,16 @@ report at a time), with no taps lost instead of up to 4 in 10. When Steam reads 
 - **When the phone is fully loaded, Steam itself can still read controllers late.** Input now always reaches it as
   the newest state, and the latency lines above show where any remaining time goes.
 
+## Installing
+
+1. Download the APK from the latest **Build APK** run on the `sdl3droiddeck` branch (Actions tab).
+2. Install it over SDL3Deck (or DroidDeck): same app, your games, prefixes and settings stay.
+3. **Uninstall the separate SDL3Bridge app** (SDL3BridgeDroidDeck). It is built in now, and two copies would fight
+   over the same USB controller.
+4. The bridge starts with default settings, because Android keeps each app's settings apart. Set them again in
+   **Settings → SDL3Bridge** (or the in-game drawer's SDL3Bridge page). Android asks once for USB access to the
+   controller, and once for "display over other apps" if you want the floating bubble.
+
 ## How it is built
 
 - **Thin fork**: every change is applied by a patch script (`patch-droiddeck.sh`) on top of the newest upstream
@@ -267,8 +277,23 @@ report at a time), with no taps lost instead of up to 4 in 10. When Steam reads 
 - **Daily auto-sync**: a scheduled workflow overlays the latest upstream DroidDeck, re-applies the patch, commits
   and builds the APK. It overwrites instead of merging, so there are never git conflicts. Upstream-only
   workflows are skipped.
-- **SDL3** is fetched at its latest stable release and built into the APK. The bridge runs in its own process
-  inside the app, so a controller-driver crash can't take your Steam session down.
+- **One source for the bridge**: the sync takes the bridge's code and the patch script straight from the
+  [SdlBridge](https://github.com/pablo89898991/SdlBridge) repo, so a change pushed there is in the next build.
+  Run *Sync upstream + SDL3 bridge* by hand to build it right away.
+- **SDL3** comes from its pinned release (`droiddeck/sdl3.env` in SdlBridge, SHA-256 checked) and is built into
+  the APK. The bridge runs in its own process inside the app (`:sdl3`), so a controller-driver crash can't take your
+  Steam session down.
+- **Signing**: built by upstream's own workflow and signed with its test key, like SDL3Deck, so each build installs
+  over the last one.
+
+### Setting the repo up (once)
+
+- `main` holds this README, `LICENSE`, `.github/workflows/sync.yml` (the daily sync) and `.github/workflows/build.yml`
+  (only so *Build APK* can be started on the build branch). The APK is built on `sdl3droiddeck`, which the sync fills.
+- Repo secret `SYNC_PAT`: a GitHub token with **repo** + **workflow** scope (GitHub doesn't let the built-in token
+  push workflow files). Optional: `DOCKERHUB_USER` / `DOCKERHUB_TOKEN`, so the build pulls its Debian image from
+  Docker Hub signed in.
+- Then *Actions → Sync upstream + SDL3 bridge → Run workflow*. It runs daily after that.
 
 ## License and credits
 

@@ -228,7 +228,7 @@ object DualSenseBridge {
         val app = context.applicationContext
         appContext = app
         bound = try {
-            app.bindService(Intent(BRIDGE_ACTION).setPackage(BRIDGE_PKG), conn, Context.BIND_AUTO_CREATE)
+            app.bindService(Intent(BRIDGE_ACTION).setPackage(bridgePackage(app)), conn, Context.BIND_AUTO_CREATE)
         } catch (e: SecurityException) { false }
         return bound
     }
@@ -340,7 +340,7 @@ object DualSenseBridge {
             val ctx = appContext
             if (!bound && ctx != null) {
                 bound = try {
-                    ctx.bindService(Intent(BRIDGE_ACTION).setPackage(BRIDGE_PKG), conn, Context.BIND_AUTO_CREATE)
+                    ctx.bindService(Intent(BRIDGE_ACTION).setPackage(bridgePackage(ctx)), conn, Context.BIND_AUTO_CREATE)
                 } catch (_: SecurityException) { false }
                 if (bound) HookupBridge.note("bridge: watchdog (re)connecting to the SDL3 bridge")
             } else if (server != null) {
@@ -478,8 +478,28 @@ object DualSenseBridge {
      */
     @JvmStatic
     fun isBridgeInstalled(context: Context): Boolean = try {
-        context.packageManager.getPackageInfo(BRIDGE_PKG, 0); true
+        context.packageManager.getPackageInfo(bridgePackage(context), 0); true
     } catch (_: Exception) { false }
+
+    @Volatile private var bridgePkg: String? = null
+
+    /**
+     * Where the SDL3 bridge is: built into this app (SDL3DroidDeck: the same bridge, in its own ":sdl3" process), or
+     * the separate SDL3Bridge app (SDL3Deck). The built-in one is used whenever this app has it.
+     */
+    @JvmStatic
+    fun bridgePackage(context: Context): String {
+        bridgePkg?.let { return it }
+        val own = context.packageName
+        val builtIn = try {
+            context.packageManager.resolveService(Intent(BRIDGE_ACTION).setPackage(own), 0) != null
+        } catch (_: Exception) { false }
+        return (if (builtIn) own else BRIDGE_PKG).also { bridgePkg = it }
+    }
+
+    /** True when the bridge is built into this app (SDL3DroidDeck). */
+    @JvmStatic
+    fun bridgeBuiltIn(context: Context): Boolean = bridgePackage(context) == context.packageName
 
     private var tritonRumbleStop: Runnable? = null
 

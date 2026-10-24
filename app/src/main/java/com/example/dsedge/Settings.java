@@ -98,7 +98,7 @@ final class Settings {
 
     static synchronized void init(Context c) {
         if (prefs != null) return;
-        prefs = c.getApplicationContext().getSharedPreferences("bridge", Context.MODE_PRIVATE);
+        prefs = c.getApplicationContext().getSharedPreferences(Host.prefs(c, "bridge"), Context.MODE_PRIVATE);
         for (int p = 0; p < PLAYERS; p++) {
             String s = "_p" + p;
             touchMode[p] = clamp(prefs.getInt("touchMode" + s, TOUCH_SPLIT), 0, 2);

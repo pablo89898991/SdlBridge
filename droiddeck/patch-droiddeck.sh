@@ -218,18 +218,20 @@ else
 fi
 
 # ---------- 6. App name -> SDL3Deck (launcher label only) ----------
-if grep -rq 'name="app_name">SDL3Deck<' "$DD/app/src/main/res" 2>/dev/null; then
-  skip "app name = SDL3Deck"
+# SDL3DroidDeck (the bridge built in, step 30) by default when SDL3_EMBED_BRIDGE=1; SDL3_APP_LABEL overrides.
+if [ "${SDL3_EMBED_BRIDGE:-0}" = 1 ]; then LABEL="${SDL3_APP_LABEL:-SDL3DroidDeck}"; else LABEL="${SDL3_APP_LABEL:-SDL3Deck}"; fi
+if grep -rq "name=\"app_name\">$LABEL<" "$DD/app/src/main/res" 2>/dev/null; then
+  skip "app name = $LABEL"
 else
   n=0
   for f in "$DD"/app/src/main/res/values*/strings.xml; do
     [ -f "$f" ] || continue
     if grep -q '<string name="app_name">DroidDeck</string>' "$f"; then
-      sed -i 's#<string name="app_name">DroidDeck</string>#<string name="app_name">SDL3Deck</string>#' "$f"
+      sed -i "s#<string name=\"app_name\">DroidDeck</string>#<string name=\"app_name\">$LABEL</string>#" "$f"
       n=$((n+1))
     fi
   done
-  if [ "$n" -gt 0 ]; then ok "app name = SDL3Deck ($n locale file(s))"; else warn "app name not changed (app_name string not found)"; fi
+  if [ "$n" -gt 0 ]; then ok "app name = $LABEL ($n locale file(s))"; else warn "app name not changed (app_name string not found)"; fi
 fi
 
 # ---------- 7. Docker Hub auth for the build (avoids the registry pull limit) ----------
@@ -1914,6 +1916,217 @@ PY
   esac
 else
   warn "fakeinput_steam.cpp / SessionService.kt not found (desktop session left as upstream)"
+fi
+
+# ---------- 30. SDL3DroidDeck: the SDL3 bridge built in (one APK) ----------
+# Only with SDL3_EMBED_BRIDGE=1 (the SDLApiDroidDeck repo's sync sets it; SDL3Deck keeps using the separate SDL3Bridge
+# app). The bridge's sources come from the SdlBridge checkout this script is part of (or SDL3_BRIDGE_SRC); SDL3
+# itself from its release pinned in sdl3.env (SHA-256 checked). It all runs in its own process (":sdl3"), as the
+# separate app did, and DroidDeck talks to it the same way (DualSenseBridge.kt finds it in its own package).
+# The app ID stays com.droiddeck.launcher, so the APK installs over SDL3Deck / DroidDeck and keeps their data.
+if [ "${SDL3_EMBED_BRIDGE:-0}" = 1 ]; then
+  BR="$(cd "${SDL3_BRIDGE_SRC:-$SRC/..}" 2>/dev/null && pwd)"
+  BJ="$BR/app/src/main/java/com/example/dsedge"
+  BN="$BR/app/jni/src"
+  BRES="$BR/app/src/main/res"
+  { [ -n "$BR" ] && [ -f "$BJ/BridgeService.java" ] && [ -f "$BN/main.c" ] && [ -f "$SRC/sdl3.env" ]; } ||
+    die "SDL3_EMBED_BRIDGE=1, but the SDL3Bridge sources (app/, droiddeck/sdl3.env) are not at ${SDL3_BRIDGE_SRC:-$SRC/..}"
+  SDL_VERSION=; SDL_SHA256=
+  . "$SRC/sdl3.env"
+  { [ -n "$SDL_VERSION" ] && [ -n "$SDL_SHA256" ]; } || die "sdl3.env names no SDL_VERSION / SDL_SHA256"
+  CPPD="$DD/app/src/main/cpp"
+  EMB="$CPPD/sdl3bridge"
+  JAVA="$DD/app/src/main/java"
+  RES="$DD/app/src/main/res"
+  MAIN="$DD/app/src/main"
+
+  # a) SDL3: its source (built by DroidDeck's CMake) and its Android Java classes, from the pinned release
+  if [ "$(cat "$EMB/SDL/.sdl3-version" 2>/dev/null)" = "$SDL_VERSION" ] && [ -f "$JAVA/org/libsdl/app/SDLActivity.java" ]; then
+    skip "SDL3 $SDL_VERSION source"
+  else
+    tmp="$(mktemp -d)"
+    url="https://github.com/libsdl-org/SDL/releases/download/release-$SDL_VERSION/SDL3-$SDL_VERSION.tar.gz"
+    curl -fsSL --retry 3 --connect-timeout 30 -o "$tmp/sdl.tar.gz" "$url" || { rm -rf "$tmp"; die "could not download $url"; }
+    echo "$SDL_SHA256  $tmp/sdl.tar.gz" | sha256sum -c --quiet - >/dev/null 2>&1 ||
+      { rm -rf "$tmp"; die "SDL3 $SDL_VERSION download does not match the SHA-256 in sdl3.env"; }
+    tar xzf "$tmp/sdl.tar.gz" -C "$tmp" || { rm -rf "$tmp"; die "could not unpack the SDL3 source"; }
+    sdl="$tmp/SDL3-$SDL_VERSION"
+    { [ -f "$sdl/CMakeLists.txt" ] && [ -f "$sdl/android-project/app/src/main/java/org/libsdl/app/SDLActivity.java" ]; } ||
+      { rm -rf "$tmp"; die "the SDL3 archive does not look like SDL3's source"; }
+    rm -rf "$EMB/SDL" && mkdir -p "$EMB/SDL"
+    # everything SDL's CMake build uses; not its tests, examples, docs or IDE projects
+    for item in "$sdl"/* "$sdl"/.git-hash; do
+      [ -e "$item" ] || continue
+      case "$(basename "$item")" in test|examples|docs|VisualC|VisualC-GDK|Xcode|AGENTS.md|CLAUDE.md) continue ;; esac
+      cp -R "$item" "$EMB/SDL/"
+    done
+    echo "$SDL_VERSION" > "$EMB/SDL/.sdl3-version"
+    rm -rf "$JAVA/org/libsdl/app" && mkdir -p "$JAVA/org/libsdl/app"
+    cp "$sdl"/android-project/app/src/main/java/org/libsdl/app/*.java "$JAVA/org/libsdl/app/"
+    rm -rf "$tmp"
+    ok "SDL3 $SDL_VERSION source (SHA-256 checked) and its Android classes"
+  fi
+  # SDL3 would also look for Bluetooth Steam Controllers: DroidDeck has its own Bluetooth Steam Controller support,
+  # and the bridge reads controllers over USB / through Android's input -- so SDL3 leaves Bluetooth alone here.
+  res=$(python3 - "$JAVA/org/libsdl/app/HIDDeviceManager.java" <<'PY'
+import sys
+p = sys.argv[1]
+s = open(p, encoding='utf-8').read()
+if 'sdl3droiddeck: Bluetooth' in s:
+    print("SKIP"); sys.exit(0)
+old = '    private void initializeBluetooth() {\n'
+if s.count(old) != 1:
+    sys.stderr.write("ANCHOR-MISS HIDDeviceManager.java :: initializeBluetooth\n"); sys.exit(3)
+s = s.replace(old, old + "        if (true) {  // sdl3droiddeck: Bluetooth controllers are DroidDeck's own (SteamControllerBle)\n"
+                         '            Log.d(TAG, "Bluetooth left to the app");\n'
+                         '            return;\n'
+                         '        }\n', 1)
+open(p, 'w', encoding='utf-8').write(s)
+print("OK")
+PY
+)
+  case "$res" in
+    OK) ok "SDL3 leaves Bluetooth controllers to DroidDeck" ;;
+    SKIP) skip "SDL3 Bluetooth guard" ;;
+    *) warn "SDL3's Bluetooth guard not added (HIDDeviceManager.java changed); harmless while DroidDeck has no BLUETOOTH_CONNECT" ;;
+  esac
+
+  # b) the bridge's native loop (libmain.so, the name SDL3's Java loads) next to SDL3 (libSDL3.so)
+  rm -rf "$EMB/src" && mkdir -p "$EMB/src"
+  cp "$BN"/*.c "$BN"/*.h "$EMB/src/"
+  cat > "$EMB/CMakeLists.txt" <<'CMK'
+# sdl3droiddeck: SDL3 and the SDL3 bridge's controller loop, built into the app (libSDL3.so + libmain.so, loaded by
+# the bridge in its own ":sdl3" process). Written by patch-droiddeck.sh (step 30); the sources are SdlBridge's.
+set(SDL_SHARED ON CACHE BOOL "" FORCE)
+set(SDL_STATIC OFF CACHE BOOL "" FORCE)
+set(SDL_TEST_LIBRARY OFF CACHE BOOL "" FORCE)
+set(SDL_TESTS OFF CACHE BOOL "" FORCE)
+set(SDL_EXAMPLES OFF CACHE BOOL "" FORCE)
+set(SDL_ANDROID_JAR OFF CACHE BOOL "" FORCE)
+set(SDL_INSTALL OFF CACHE BOOL "" FORCE)
+add_subdirectory(SDL)
+add_library(main SHARED src/main.c)
+target_link_libraries(main PRIVATE SDL3::SDL3 log)
+CMK
+  if grep -q "add_subdirectory(sdl3bridge)" "$CPPD/CMakeLists.txt"; then
+    skip "SDL3 + bridge in DroidDeck's native build"
+  else
+    printf '\n# sdl3droiddeck: SDL3 and the SDL3 bridge (patch-droiddeck.sh step 30)\nadd_subdirectory(sdl3bridge)\n' >> "$CPPD/CMakeLists.txt"
+    ok "SDL3 + bridge in DroidDeck's native build"
+  fi
+
+  # c) the bridge's Java (same package as in SDL3Bridge; it notices it is built in: Host.java)
+  rm -rf "$JAVA/com/example/dsedge" && mkdir -p "$JAVA/com/example/dsedge"
+  cp "$BJ"/*.java "$JAVA/com/example/dsedge/"
+  sed -i 's/\bR\.drawable\.ic_stat_bridge\b/com.droiddeck.launcher.R.drawable.sdl3_ic_stat_bridge/g' "$JAVA/com/example/dsedge"/*.java
+  if grep -nE '(^|[^.[:alnum:]_])R\.[a-z]+\.' "$JAVA/com/example/dsedge"/*.java; then
+    die "the bridge's Java uses one of its own resources that step 30 does not bring along (see above)"
+  fi
+  ok "SDL3 bridge Java ($(ls "$JAVA/com/example/dsedge" | wc -l) files)"
+
+  # d) its resources, under names of their own, and what its screen shows as its build (no update check of its
+  #    own when built in: it updates with the app)
+  mkdir -p "$RES/drawable" "$RES/xml" "$MAIN/assets"
+  cp "$BRES/drawable/ic_stat_bridge.xml" "$RES/drawable/sdl3_ic_stat_bridge.xml"
+  cp "$BRES/xml/device_filter.xml" "$RES/xml/sdl3_device_filter.xml"
+  rev=$(git -C "$BR" rev-parse --short HEAD 2>/dev/null || echo local)
+  printf 'repo=embedded\ntag=SdlBridge %s\nsdl=%s\n' "$rev" "$SDL_VERSION" > "$MAIN/assets/sdl3bridge-build.txt"
+  ok "SDL3 bridge resources"
+
+  # e) manifest: the bridge's screen, service and "controller plugged in" handler, all in the ":sdl3" process
+  res=$(python3 - "$MANIFEST" <<'PY'
+import sys
+p = sys.argv[1]
+s = open(p, encoding='utf-8').read()
+if 'com.example.dsedge.BridgeService' in s:
+    print("SKIP"); sys.exit(0)
+perms = ''
+for name in ('android.permission.FOREGROUND_SERVICE', 'android.permission.FOREGROUND_SERVICE_SPECIAL_USE',
+             'android.permission.POST_NOTIFICATIONS', 'android.permission.SYSTEM_ALERT_WINDOW',
+             'android.permission.VIBRATE', 'android.permission.INTERNET'):
+    if ('"%s"' % name) not in s:
+        perms += '    <uses-permission android:name="%s" />\n' % name
+if 'android.hardware.usb.host' not in s:
+    perms += '    <uses-feature android:name="android.hardware.usb.host" android:required="false" />\n'
+config = 'layoutDirection|locale|orientation|uiMode|screenLayout|screenSize|smallestScreenSize|keyboard|keyboardHidden|navigation'
+parts = """
+        <!-- sdl3droiddeck: the SDL3 bridge, built in. SDL3 and the bridge run in their own process (":sdl3"), so a
+             controller-driver crash can't take the session down; DroidDeck talks to it as to the separate app. -->
+        <activity
+            android:name="com.example.dsedge.BridgeActivity"
+            android:process=":sdl3"
+            android:exported="false"
+            android:label="SDL3Bridge"
+            android:launchMode="singleTop"
+            android:alwaysRetainTaskState="true"
+            android:taskAffinity="${applicationId}.sdl3bridge"
+            android:theme="@android:style/Theme.NoTitleBar.Fullscreen"
+            android:configChanges="CONFIG" />
+        <activity
+            android:name="com.example.dsedge.SdlHostActivity"
+            android:process=":sdl3"
+            android:exported="false"
+            android:theme="@android:style/Theme.Translucent.NoTitleBar"
+            android:configChanges="CONFIG" />
+        <activity
+            android:name="com.example.dsedge.UsbAttachActivity"
+            android:process=":sdl3"
+            android:exported="true"
+            android:excludeFromRecents="true"
+            android:noHistory="true"
+            android:taskAffinity=""
+            android:theme="@android:style/Theme.NoDisplay">
+            <intent-filter>
+                <action android:name="android.hardware.usb.action.USB_DEVICE_ATTACHED" />
+            </intent-filter>
+            <meta-data android:name="android.hardware.usb.action.USB_DEVICE_ATTACHED"
+                       android:resource="@xml/sdl3_device_filter" />
+        </activity>
+        <service
+            android:name="com.example.dsedge.BridgeService"
+            android:process=":sdl3"
+            android:exported="false"
+            android:foregroundServiceType="specialUse">
+            <property android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
+                      android:value="game controller bridge" />
+            <intent-filter><action android:name="com.example.dsedge.BRIDGE" /></intent-filter>
+        </service>
+""".replace('CONFIG', config)
+if s.count('    <application') != 1 or s.count('    </application>') != 1:
+    sys.stderr.write("ANCHOR-MISS AndroidManifest.xml :: <application> / </application>\n"); sys.exit(3)
+if perms:
+    s = s.replace('    <application', perms + '\n    <application', 1)
+s = s.replace('    </application>', parts + '    </application>', 1)
+open(p, 'w', encoding='utf-8').write(s)
+print("OK")
+PY
+)
+  case "$res" in
+    OK) ok "manifest: SDL3 bridge screen, service and USB handler in the :sdl3 process" ;;
+    SKIP) skip "manifest: SDL3 bridge components" ;;
+    *) die "manifest: SDL3 bridge components could not be added (see ANCHOR-MISS above)" ;;
+  esac
+
+  # f) DroidDeck's app start-up skips its own set-up in the bridge's process (as for its other helper processes)
+  res=$(python3 - "$PKG/App.kt" <<'PY'
+import sys
+p = sys.argv[1]
+s = open(p, encoding='utf-8').read()
+if ':sdl3"' in s:
+    print("SKIP"); sys.exit(0)
+old = '        if (process == "$packageName:vr_recovery" || process == "$packageName:rgb_diagnostic") return\n'
+if s.count(old) != 1:
+    sys.stderr.write("ANCHOR-MISS App.kt :: helper-process return\n"); sys.exit(3)
+s = s.replace(old, '        if (process == "$packageName:sdl3") return  // sdl3droiddeck: the SDL3 bridge\'s process\n' + old, 1)
+open(p, 'w', encoding='utf-8').write(s)
+print("OK")
+PY
+)
+  case "$res" in
+    OK) ok "App.kt: the bridge's process starts light" ;;
+    SKIP) skip "App.kt :sdl3 process" ;;
+    *) die "App.kt: the bridge's process could not be kept light (see ANCHOR-MISS above)" ;;
+  esac
 fi
 
 echo

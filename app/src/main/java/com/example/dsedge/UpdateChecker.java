@@ -31,7 +31,8 @@ final class UpdateChecker {
 
     static BuildInfo readBuildInfo(Context ctx) {
         BuildInfo b = new BuildInfo();
-        try (InputStream in = ctx.getAssets().open("build.txt");
+        // Built into another app (SDL3DroidDeck), the bridge's build info has its own name next to that app's assets.
+        try (InputStream in = ctx.getAssets().open(Host.embedded(ctx) ? "sdl3bridge-build.txt" : "build.txt");
              BufferedReader r = new BufferedReader(new InputStreamReader(in))) {
             String line;
             while ((line = r.readLine()) != null) {
@@ -52,7 +53,9 @@ final class UpdateChecker {
         new Thread(() -> {
             String msg;
             String url = null;
-            if (cur.repo.equals("UNKNOWN")) {
+            if (Host.embedded(ctx)) {
+                msg = "Built into " + Host.appName(ctx) + ": it updates together with it.";
+            } else if (cur.repo.equals("UNKNOWN")) {
                 msg = "Updates are off: this APK was not built by the GitHub workflow.";
             } else {
                 try {

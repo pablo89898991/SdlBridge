@@ -53,11 +53,14 @@ final class SdlEngine {
         NativeBridge.onBridgeLog("engine: " + line);
     }
 
-    private static SharedPreferences prefs(Context c) { return c.getSharedPreferences("engine", Context.MODE_PRIVATE); }
+    private static SharedPreferences prefs(Context c) { return c.getSharedPreferences(Host.prefs(c, "engine"), Context.MODE_PRIVATE); }
 
+    /** Which build this is: the version code, or -- built into SDL3DroidDeck, whose version code stays the same from
+     *  build to build -- when it was installed, so a new build tries the background again. */
     private static long version(Context c) {
         try {
             android.content.pm.PackageInfo pi = c.getPackageManager().getPackageInfo(c.getPackageName(), 0);
+            if (Host.embedded(c)) return pi.lastUpdateTime;
             return android.os.Build.VERSION.SDK_INT >= 28 ? pi.getLongVersionCode() : pi.versionCode;
         } catch (Exception e) { return 0; }
     }
