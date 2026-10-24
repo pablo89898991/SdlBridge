@@ -233,8 +233,17 @@ static int SDLCALL hk_reader(void *unused)
     (void)unused;
     JNIEnv *env = (JNIEnv *)SDL_GetAndroidJNIEnv();
     setpriority(PRIO_PROCESS, (id_t)syscall(SYS_gettid), -10);   /* like Android's URGENT_DISPLAY; ignored if refused */
+    /* Latency meter, every controller: do reports come from Android's USB layer one by one, or in bursts (several
+     * waiting at once = they were held up before the bridge got them)? Logged every 10 s: the first time, then
+     * when bursts or long gaps show up. */
+    uint32_t m_reports[HOOKUP_SLOTS] = {0}, m_passes[HOOKUP_SLOTS] = {0}, m_burst[HOOKUP_SLOTS] = {0};
+    uint64_t m_last_us[HOOKUP_SLOTS] = {0}, m_gap_us[HOOKUP_SLOTS] = {0}, m_since_us = 0;
+    int m_logged[HOOKUP_SLOTS] = {0};
     for (;;) {
         int got = 0, any = 0;
+        struct timespec ts;
+        clock_gettime(CLOCK_MONOTONIC, &ts);
+        uint64_t now_us = (uint64_t)ts.tv_sec * 1000000u + (uint64_t)ts.tv_nsec / 1000u;
         pthread_mutex_lock(&g_hk_io);
         for (int i = 0; i < HOOKUP_SLOTS; i++) {
             SDL_hid_device *dev = g_hk[i].dev;
@@ -242,12 +251,14 @@ static int SDLCALL hk_reader(void *unused)
             any = 1;
             int fast = hks_owns(&g_hks, i, g_hk[i].vid, g_hk[i].pid);
             atomic_store(&g_hk_fast_now[i], fast);
+            uint32_t pass = 0;
             for (int reads = 0; reads < 64; reads++) {
                 Uint8 buf[HOOKUP_REPORT_MAX];
                 int n = SDL_hid_read(dev, buf, sizeof(buf));
                 if (n == 0) break;
                 if (n < 0) { atomic_store(&g_hk_gone[i], 1); break; }
                 got++;
+                pass++;
                 if (fast) {
                     hks_write_in(&g_hks, i, buf, n);
                 } else if (env && g_hk_input) {
@@ -257,8 +268,29 @@ static int SDLCALL hk_reader(void *unused)
                     if (arr) (*env)->DeleteLocalRef(env, arr);
                 }
             }
+            if (pass) {
+                m_reports[i] += pass;
+                m_passes[i]++;
+                if (pass > m_burst[i]) m_burst[i] = pass;
+                if (m_last_us[i] && now_us - m_last_us[i] > m_gap_us[i]) m_gap_us[i] = now_us - m_last_us[i];
+                m_last_us[i] = now_us;
+            }
         }
         pthread_mutex_unlock(&g_hk_io);
+        if (!m_since_us) m_since_us = now_us;
+        if (now_us - m_since_us >= 10000000u) {
+            double secs = (now_us - m_since_us) / 1e6;
+            for (int i = 0; i < HOOKUP_SLOTS; i++) {
+                if (!m_passes[i]) continue;
+                if (env && (!m_logged[i]++ || m_burst[i] > 2 || m_gap_us[i] > 8000))
+                    hk_log(env, "latency: slot %d: %.0f reports/s from USB, up to %u waiting at once (avg %.2f), "
+                           "longest gap %.1f ms", i, m_reports[i] / secs, m_burst[i],
+                           (double)m_reports[i] / m_passes[i], m_gap_us[i] / 1000.0);
+                m_reports[i] = m_passes[i] = m_burst[i] = 0;
+                m_gap_us[i] = 0;
+            }
+            m_since_us = now_us;
+        }
         if (!got) {
             struct timespec t = { 0, any ? 250000L : 20000000L };   /* 250 us while controllers are handed over */
             nanosleep(&t, NULL);

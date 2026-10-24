@@ -70,6 +70,15 @@ static inline uint64_t hks_now_ms(void)
     return (uint64_t)t.tv_sec * 1000u + (uint64_t)t.tv_nsec / 1000000u;
 }
 
+/* Read time of an input report for DroidDeck's latency meter: CLOCK_MONOTONIC in us, low 32 bits, never 0. */
+static inline uint32_t hks_stamp_us(void)
+{
+    struct timespec t;
+    clock_gettime(CLOCK_MONOTONIC, &t);
+    uint32_t us = (uint32_t)((uint64_t)t.tv_sec * 1000000u + (uint64_t)t.tv_nsec / 1000u);
+    return us ? us : 1;
+}
+
 static inline uint8_t *hks_slot(const HkShm *m, int i) { return m->base + HKS_HEADER + (size_t)i * HKS_SLOT; }
 static inline uint64_t *hks_u64(uint8_t *s, int off) { return (uint64_t *)(void *)(s + off); }
 static inline uint32_t *hks_u32(uint8_t *s, int off) { return (uint32_t *)(void *)(s + off); }
@@ -135,7 +144,7 @@ static inline void hks_write_in(const HkShm *m, int i, const uint8_t *data, int 
     __atomic_store_n(hks_u64(e, 0), 0, __ATOMIC_RELAXED);
     __atomic_thread_fence(__ATOMIC_RELEASE);
     __atomic_store_n(hks_u32(e, 8), (uint32_t)n, __ATOMIC_RELAXED);
-    __atomic_store_n(hks_u32(e, 12), 0, __ATOMIC_RELAXED);
+    __atomic_store_n(hks_u32(e, 12), hks_stamp_us(), __ATOMIC_RELAXED);   /* when the bridge read it: latency meter */
     memcpy(e + 16, data, (size_t)n);
     __atomic_thread_fence(__ATOMIC_RELEASE);
     __atomic_store_n(hks_u64(e, 0), idx + 1, __ATOMIC_RELEASE);

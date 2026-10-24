@@ -249,6 +249,10 @@ are timed directly; for the rest, a learned button-like bit that turns on counts
   (mouse / keyboard mappings see this delay too).
 - `latency: Steam read a button press -> on Steam's virtual pad (Steam's own processing)` -- gamepad mappings only.
 - `latency: Steam's virtual pad -> game read` (game process).
+- Hook-up only, before all of the above: `latency: slot N: R reports/s from USB, up to K waiting at once ...,
+  longest gap G ms` (SDL3Bridge: reports coming from Android's USB layer one by one, or held up in bursts) and
+  `latency: SDL3Bridge read a report -> it reached Steam's side` (the shared-memory hop; each report carries the
+  time the bridge read it).
 - `hookup: /dev/hidraw24: N reports/s, Steam read M/s (all waiting each time | the newest each time), avg X ms after
   they arrived ...` (`deck: Steam Deck pad: ...` for DroidDeck's own pads) when Steam was slow to read, and which
   way Steam reads (`Steam takes every report waiting each time` / `Steam reads one report at a time`).
