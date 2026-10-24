@@ -258,7 +258,9 @@ are timed directly; for the rest, a learned button-like bit that turns on counts
   input device each side set up (which kinds of input it can send), and which X server each line is from (`:0` is
   Steam's, `:1` the game's) with its connection to gamescope. A click that never reaches a game shows the
   step where it stops. Buttons are logged one by one at first, then every 100th; keys a few times to compare.
-  (Steam's own XTest calls are not traced: Steam loads that library privately, and wrapping it dropped its input.)
+  Steam's own XTest calls are traced too (`Steam sent XTest mouse button 1 press to X display :1 (sent)`): Steam's
+  client library links libXtst privately, so the real functions are looked up in libXtst itself (a first version
+  that didn't dropped Steam's mouse and keyboard output).
 - `hookup: ... the controller fell behind` (Steam's output reports waited for room) and `hookup: report 0xNN read took
   X ms` (a slow feature read).
 
