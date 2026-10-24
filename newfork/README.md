@@ -196,8 +196,10 @@ report at a time), with no taps lost instead of up to 4 in 10. When Steam reads 
   - DroidDeck keeps the latest state per controller instead of a growing queue, so every button change is kept
     and stale stick/gyro frames are dropped
   - Steam reads the newest state of every controller (above)
-- **Poll rate** up to 1000 Hz. In Steam Native Hook-up it also paces how often Steam gets the newest report (a
-  controller's 1000 reports a second can make Windows games lag under emulation; lower it if they do).
+- **Steam's virtual pad paced for games**: stick and trigger movement reaches the game at most 250 times a second
+  (newest values), buttons instantly. Steam's 1000 updates a second made Windows games lag under emulation; Steam
+  itself still reads the controller at full rate, so gyro-to-mouse keeps it.
+- **Poll rate** up to 1000 Hz. In Steam Native Hook-up it also paces how often Steam gets the newest report.
 - **Game thread boost** (Android performance hints, ADPF): unlocked for any Android 12+ device, with a switch
   in Settings → Performance and in the drawer's Latency group.
 - **Steam started with `+controller_rate 500`**.

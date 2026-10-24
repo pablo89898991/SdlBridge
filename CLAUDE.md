@@ -29,5 +29,8 @@ SDL3Bridge is for **every SDL3-supported controller** (USB or Bluetooth, any ven
   `dlsym(RTLD_NEXT)` alone. Steam's client links libXtst (and others) privately, so RTLD_NEXT finds nothing and
   the call is silently dropped; fall back to `dlopen("<soname>", RTLD_NOLOAD)` + `dlsym(handle)`. Test it with a
   library loaded via `dlopen(RTLD_LOCAL)`.
+- A background thread in the preload library: never give the mutex / condition variable it waits on static storage
+  that is destroyed at exit (destroying a condition variable with a waiter blocks forever: the app hangs on quit).
+  Allocate them once with `new` and never free them, as the hook's other globals are.
 - Plan for the merged app "SDLApiDroidDeck" (repo name): `newfork/PLAN.md` (README for its main page:
   `newfork/README.md`).

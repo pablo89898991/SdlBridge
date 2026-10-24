@@ -320,6 +320,20 @@ save a compositor plane. With it off, Steam Input's mouse output from a controll
 a mouse click does nothing (keyboard bindings and mouse movement still work). SDL3Deck starts it ON; the switch is
 still there to turn it off.
 
+## Steam's virtual pad paced for games (every controller, every mode)
+
+What actually made Hook-up unplayable at 1000 Hz (and fine at 250 Hz): Steam updates its virtual pad about as
+often as the controller sends reports, and a Windows game gets every update passed along one by one inside Wine;
+under x86 emulation that falls behind and the game lags. So DroidDeck's uinput hook now passes **stick / trigger
+movement** to the game at most **250 times a second**, merged to the newest values, while **button presses and
+releases are never held** (a frame with a button change goes out at once, after the newest axis values; a last
+move is delivered by a small pacer thread, nothing gets stuck). Steam itself still reads the controller at full
+rate, so gyro-to-mouse and mouse / keyboard bindings (which don't go through the virtual pad) keep 1000 Hz.
+`FAKE_VIRTUAL_PAD_HZ` sets another rate (0 = every update, as before). Simulated with a Steam writing its pad
+~860 times a second: the game got 204 frames/s instead of 704, every press and release, presses 1.1 ms after Steam
+wrote them (1.4 ms unpaced), and the final stick position. pad.log: `latency: Steam updates its virtual pad N times
+a second; the game gets M`.
+
 ## Hook-up follows the Poll rate (every controller)
 
 In Steam Native Hook-up the controller's own reports go to Steam as they come: a DualSense over USB sends about
