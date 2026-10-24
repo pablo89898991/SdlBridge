@@ -254,8 +254,9 @@ are timed directly; for the rest, a learned button-like bit that turns on counts
   way Steam reads (`Steam takes every report waiting each time` / `Steam reads one report at a time`).
 - `mouse: ...` -- Steam Input's mouse / keyboard output on its way to the game. Steam sends XTest events to the
   game's X server (Xwayland); the trace shows the X server handing them to gamescope (`X server handed mouse button
-  0x110 press to gamescope (libei)`), gamescope receiving them (`gamescope received mouse button ...`), and the
-  input device each side set up (which kinds of input it can send). A click that never reaches a game shows the
+  0x110 press to gamescope (libei)`), gamescope receiving them (`gamescope received mouse button ...`), the
+  input device each side set up (which kinds of input it can send), and which X server each line is from (`:0` is
+  Steam's, `:1` the game's) with its connection to gamescope. A click that never reaches a game shows the
   step where it stops. Buttons are logged one by one at first, then every 100th; keys a few times to compare.
   (Steam's own XTest calls are not traced: Steam loads that library privately, and wrapping it dropped its input.)
 - `hookup: ... the controller fell behind` (Steam's output reports waited for room) and `hookup: report 0xNN read took
