@@ -14,8 +14,10 @@ SDL3Bridge app built in. Decided with the owner:
 
 ## How it is put together
 
-- `main`: `README.md`, `LICENSE` (upstream's GPLv3), `.github/workflows/sync.yml` (= `newfork/sync.yml`) and
-  `.github/workflows/build.yml` (= `newfork/build.yml`, a stub so "Build APK" can be dispatched on the build branch).
+- `main`: `README.md`, `LICENSE` (upstream's GPLv3), `.github/workflows/sync.yml` (= `newfork/sync.yml`),
+  `.github/workflows/build.yml` (= `newfork/build.yml`, a stub so "Build APK" can be dispatched on the build branch)
+  and `.github/workflows/publish.yml` (= `newfork/publish.yml`: each successful build -> release `build-N` with
+  `SDL3DroidDeck.apk`, newest 10 kept). Not `release.yml`: upstream has a workflow of that name.
 - Build branch `sdl3droiddeck`: filled by the sync -- newest upstream, then
   `SDL3_EMBED_BRIDGE=1 SDL3_APP_LABEL=SDL3DroidDeck bash SdlBridge/droiddeck/patch-droiddeck.sh .` from a fresh
   clone of SdlBridge. Nothing of SdlBridge is copied into SDLApiDroidDeck by hand: push to SdlBridge, run the sync.

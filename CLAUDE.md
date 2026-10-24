@@ -40,6 +40,7 @@ SDL3Bridge is for **every SDL3-supported controller** (USB or Bluetooth, any ven
   Steam starts and other desktop programs each see different controller nodes (step 29, `FAKE_EVDEV_DESKTOP`), and
   Hook-up waits for the Steam client's heartbeat. Check a controller change in both kinds of session.
 - The merged app "SDLApiDroidDeck" (repo name; app label SDL3DroidDeck, app ID com.droiddeck.launcher):
-  `newfork/PLAN.md`, its workflows `newfork/sync.yml` + `newfork/build.yml`, README `newfork/README.md`. The bridge
+  `newfork/PLAN.md`, its workflows `newfork/sync.yml` + `newfork/build.yml` + `newfork/publish.yml` (releases),
+  README `newfork/README.md`. The bridge
   runs there in the app's `:sdl3` process; bridge code must keep working both built in and as its own app
   (`Host.embedded()` on the bridge side, `DualSenseBridge.bridgePackage()` on DroidDeck's).
