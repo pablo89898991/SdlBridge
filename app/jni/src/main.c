@@ -341,6 +341,8 @@ static void refresh_status(JNIEnv *env)
             snprintf(tail, sizeof(tail), " | + %d controller(s) handed to Steam natively%s", hookup_count(),
                      hookup_fast_count() ? " (fast path)" : "");
             SDL_strlcat(diag, tail, sizeof(diag));
+        } else if (atomic_load(&g_hookup_held)) {
+            SDL_strlcat(diag, " | Steam Native Hook-up waits for Steam on DroidDeck's desktop", sizeof(diag));
         }
     } else if (hookup_active()) {
         snprintf(diag, sizeof(diag), "Connected: Steam Native Hook-up | %d controller(s) handed to Steam as the real "

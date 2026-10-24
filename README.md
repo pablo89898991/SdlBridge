@@ -162,6 +162,37 @@ Limits: controllers that only reach Android through Bluetooth can't be handed ov
 apps raw HID access to them); they keep working as DroidDeck's Steam Deck pad. Bridge-side settings (remaps,
 gyro tuning, lightbar) don't apply to hooked-up controllers -- configure them in Steam, like on a PC.
 
+## DroidDeck's desktop session (every mode, every controller)
+
+The bridge's modes now work on DroidDeck's **desktop** too (and with Steam's desktop UI), not only in the Steam
+session. Upstream DroidDeck gives Steam its own controller nodes only in the Steam session; on the desktop every
+controller was a plain Xbox 360 pad, so "Present controller as" and Steam Native Hook-up did nothing there. With the
+bridge installed, the desktop gets them as well, set up the way a PC is -- Steam is one program among others there:
+
+| Who | What it sees |
+|---|---|
+| Steam (desktop client, arm64 or x86-64) | the controller as the bridge presents it (Steam Deck / DualSense / Edge / DS4 / Steam Controller 2026 / 2015), or the real controller with Hook-up -- like in the Steam session |
+| Games Steam starts | Steam's virtual pads (Steam Input), like in the Steam session |
+| Every other program (started from the desktop) | DroidDeck's pads, Xbox 360 controllers, as before -- not the nodes meant for Steam, so no controller shows up twice |
+
+**Steam Native Hook-up waits for Steam on the desktop.** Steam may not be running there. The Steam client's side
+writes a heartbeat into the hook-up file; while there is none, DroidDeck tells the bridge and it keeps the
+controllers as ordinary gamepads that every desktop program can use. Start Steam and they are handed to it within
+about 1.5 s (hot-plugged, like plugging the controller into a PC); quit Steam and after 5 s they are gamepads again.
+The bridge's notification and status say "Hook-up waits for Steam (DroidDeck desktop)" meanwhile. In the Steam
+session nothing changes (Steam is always there). While Steam runs on the desktop it drives the controllers itself,
+so other desktop programs get them through Steam: add them to Steam (non-Steam game) for Steam Input, or use Steam's
+Desktop Configuration -- like on a PC with Steam open.
+
+Like on a PC, Steam applies its **Desktop Layout** (mouse on a stick / trackpad, keys on buttons) to the controllers it
+drives while no game runs. With a present-as type, desktop programs also see the controller as an Xbox 360 pad, so
+both act at once; turn the Desktop Layout off (or change it) in Steam's Controller settings if you don't want that.
+
+pad.log: `deck pad: on for the SDL3 bridge on the desktop`, `hookup: Steam runs on the desktop` / `Steam is not
+running on the desktop`, and the bridge's `hookup: DroidDeck's desktop has no Steam running`. Old builds of either
+app: the bridge without this ignores the desktop flag (hook-up stays on, as before); DroidDeck without it keeps
+the desktop as upstream (Xbox 360 pads).
+
 ## Steam Controller (2026) over USB cable or wireless puck
 
 Plug a Steam Controller (2026) in with a cable (28de:1302), or plug in its wireless puck (28de:1304/1305), and

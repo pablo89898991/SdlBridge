@@ -92,6 +92,7 @@ public class BridgeService extends Service implements NativeBridge.Listener {
                     break;
                 case MSG_UNREGISTER:
                     if (m.replyTo != null) { clients.remove(m.replyTo); clientCount = clients.size(); }
+                    if (clients.isEmpty()) NativeBridge.setSteamAway(false);   // DroidDeck's session ended
                     break;
                 case MSG_OUTPUT:
                     mergeOutput(m.getData());
@@ -110,6 +111,10 @@ public class BridgeService extends Service implements NativeBridge.Listener {
                     break;
                 }
                 case MSG_HOOKUP_SYNC:
+                    // DroidDeck's desktop: is the Steam client running there? (Absent = yes: the Steam session.)
+                    NativeBridge.setSteamAway(m.getData() != null && m.getData().getBoolean("steamAway", false));
+                    handler.removeCallbacks(steamAwayLapse);
+                    if (NativeBridge.hookupWaitsForSteam()) handler.postDelayed(steamAwayLapse, 10100);
                     if (m.replyTo != null) {
                         // A client the bridge forgot (the bridge was restarted) is registered again.
                         if (!clients.contains(m.replyTo)) {
@@ -159,6 +164,8 @@ public class BridgeService extends Service implements NativeBridge.Listener {
         }
     };
     private final Messenger messenger = new Messenger(handler);
+    /** DroidDeck stopped saying that Steam is away (it went away itself): hook-up goes on again. */
+    private final Runnable steamAwayLapse = NativeBridge::recheckHookup;
 
     // ---- floating bubble ----
     private final Handler main = new Handler(Looper.getMainLooper());
@@ -202,7 +209,9 @@ public class BridgeService extends Service implements NativeBridge.Listener {
             android.app.PendingIntent.FLAG_IMMUTABLE | android.app.PendingIntent.FLAG_UPDATE_CURRENT);
         String text = SdlEngine.error != null ? SdlEngine.error : NativeBridge.lastStatus;
         return new Notification.Builder(this, "bridge")
-            .setContentTitle(Settings.isHookup() ? "SDL3Bridge · Steam Native Hook-up" : "SDL3Bridge")
+            .setContentTitle(!Settings.isHookup() ? "SDL3Bridge"
+                : NativeBridge.hookupWaitsForSteam() ? "SDL3Bridge · Hook-up waits for Steam (DroidDeck desktop)"
+                : "SDL3Bridge · Steam Native Hook-up")
             .setContentText(text)
             .setStyle(new Notification.BigTextStyle().bigText(text))
             .setSmallIcon(R.drawable.ic_stat_bridge)

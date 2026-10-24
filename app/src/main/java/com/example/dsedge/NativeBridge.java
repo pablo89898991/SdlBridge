@@ -204,7 +204,39 @@ public final class NativeBridge {
     }
 
     static void applyHookup() {
-        try { nativeSetHookup(Settings.isHookup() ? 1 : 0); } catch (UnsatisfiedLinkError e) { }
+        try { nativeSetHookup(hookupMode()); } catch (UnsatisfiedLinkError e) { }
+    }
+
+    // ---- DroidDeck's desktop: Steam Native Hook-up waits for Steam ----
+    // On DroidDeck's desktop Steam is one program among others and may not be running. DroidDeck says so with each
+    // watchdog sync (every 1.5 s); while it does, hook-up waits: controllers stay ordinary gamepads every program
+    // can use, and are handed to Steam once its client runs. Lapses by itself if DroidDeck stops saying it.
+    private static volatile long steamAwayUntilMs;
+    private static volatile int hookupApplied = -1;
+
+    /** 0 off, 1 on, 2 on but waiting for Steam (DroidDeck's desktop without Steam running). */
+    static int hookupMode() {
+        if (!Settings.isHookup()) return 0;
+        return android.os.SystemClock.uptimeMillis() < steamAwayUntilMs ? 2 : 1;
+    }
+
+    static boolean hookupWaitsForSteam() { return hookupMode() == 2; }
+
+    /** From DroidDeck's sync: is Steam away (its desktop without the Steam client running)? */
+    static void setSteamAway(boolean away) {
+        steamAwayUntilMs = away ? android.os.SystemClock.uptimeMillis() + 10000 : 0;
+        recheckHookup();
+    }
+
+    /** Applies hook-up again if waiting for Steam started or ended (also when the wait lapsed). */
+    static void recheckHookup() {
+        int mode = hookupMode();
+        if (mode == hookupApplied) return;
+        int was = hookupApplied;
+        hookupApplied = mode;
+        if (mode == 2) onBridgeLog("hookup: DroidDeck's desktop has no Steam running: controllers stay ordinary gamepads until it starts");
+        else if (was == 2 && mode == 1) onBridgeLog("hookup: Steam runs on DroidDeck's desktop: controllers are handed to Steam");
+        applyHookup();
     }
 
     static void hookupOutput(int slot, int kind, byte[] report) {
@@ -288,7 +320,7 @@ public final class NativeBridge {
     static void applyDriver() {
         try {
             nativeSetDriver(Settings.driverEnabled ? 1 : 0);
-            nativeSetHookup(Settings.isHookup() ? 1 : 0);
+            nativeSetHookup(hookupMode());
             if (Settings.driverEnabled) nativeSetForce(Settings.forceUsb ? 1 : 0);
         } catch (UnsatisfiedLinkError e) { }
     }

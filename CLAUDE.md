@@ -32,5 +32,9 @@ SDL3Bridge is for **every SDL3-supported controller** (USB or Bluetooth, any ven
 - A background thread in the preload library: never give the mutex / condition variable it waits on static storage
   that is destroyed at exit (destroying a condition variable with a waiter blocks forever: the app hangs on quit).
   Allocate them once with `new` and never free them, as the hook's other globals are.
+- Every session type, not only the Steam session: on DroidDeck's desktop (KDE; Steam's desktop UI too) Steam is one
+  program among others, may not be running, and may be the x86-64 client under FEX. There the Steam client, games
+  Steam starts and other desktop programs each see different controller nodes (step 29, `FAKE_EVDEV_DESKTOP`), and
+  Hook-up waits for the Steam client's heartbeat. Check a controller change in both kinds of session.
 - Plan for the merged app "SDLApiDroidDeck" (repo name): `newfork/PLAN.md` (README for its main page:
   `newfork/README.md`).

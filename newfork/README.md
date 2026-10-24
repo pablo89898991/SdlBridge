@@ -30,6 +30,8 @@ controller**, exactly as if it were plugged into a PC.
 - **Runs silently in the background** with a status bar icon. Nothing pops up over your game.
 - **Per-player settings** (P1–P4): gyro, touchpad, button remap, lightbar.
 - **Floating bubble**: tap to switch the SDL3 driver on or off, double tap for Steam Native Hook-up.
+- **Works on the desktop too**: every mode (present-as types and Hook-up) also works with Steam on DroidDeck's
+  desktop, set up like a PC.
 - **Auto-sync**: rebuilt on the newest upstream DroidDeck every day.
 
 ---
@@ -100,6 +102,26 @@ How Steam sees the controller when it isn't handed over raw:
 
 Sony rumble is decoded the way Steam and SDL actually send it (enhanced rumble, and stops are honoured), and
 rumble goes to the controller instead of the phone.
+
+## On DroidDeck's desktop
+
+Every mode works with Steam on the desktop (and with Steam's desktop UI), not only in the Steam session. The
+desktop is set up the way a PC is, with Steam as one program among others:
+
+| Who | What it sees |
+|---|---|
+| Steam (desktop client, arm64 or x86-64) | The controller as you present it, or the real controller with Hook-up |
+| Games Steam starts | Steam's virtual pads (Steam Input), as in the Steam session |
+| Other desktop programs | Xbox 360 controllers, as in upstream DroidDeck. They don't see the nodes meant for Steam, so no controller shows up twice |
+
+**Hook-up waits for Steam.** On the desktop, Steam may not be running. Until it starts (and 5 s after it quits),
+the controllers stay ordinary gamepads that every desktop program can use. Once the Steam client runs, they're
+handed to it within about 1.5 s, hot-plugged as on a PC. While Steam runs, other programs get the controllers
+through Steam: add them to Steam as non-Steam games, or use Steam's Desktop Configuration.
+
+Like on a PC, Steam applies its **Desktop Layout** (mouse on a stick or trackpad, keys on buttons) to the controllers
+it drives while no game runs. Desktop programs also see a presented controller as an Xbox 360 pad, so both act at
+once. Turn the Desktop Layout off or change it in Steam's controller settings if you don't want that.
 
 ## Steam Controller (2026) over cable or puck
 
@@ -220,6 +242,7 @@ report at a time), with no taps lost instead of up to 4 in 10. When Steam reads 
 | `hookup: … / deck: … reports/s, Steam read …` | Steam was slow to read a controller: how many reports it read, how late, and which way it reads |
 | `hookup: … the controller fell behind` | Steam sent output reports faster than the controller took them |
 | `thread N (…) now runs at higher priority` | One of Steam's controller threads was raised |
+| `hookup: Steam runs on the desktop` / `Steam is not running on the desktop` | On DroidDeck's desktop: whether Hook-up hands controllers to Steam right now |
 | `mouse: …` | Steam Input's mouse clicks / keys on their way to the game: handed over by the X server, received by gamescope |
 | `bridge: input lag, last 10 s` | Bridge frames arrived late in DroidDeck |
 | `sdl3bridge: …` | The bridge's own log: hand-overs, fast path, engine start-up |

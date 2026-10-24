@@ -28,6 +28,7 @@ typedef struct {
 
 static HookupDev g_hk[HOOKUP_SLOTS];
 static _Atomic int g_hookup_on;
+static _Atomic int g_hookup_held;          /* on, but waiting for Steam (DroidDeck's desktop without Steam running) */
 static int g_hookup_applied = -1;          /* last mode the SDL thread acted on */
 static char g_hk_types[1024];              /* "0xVVVV/0xPPPP,..." controller types handed to Steam */
 static int g_hk_iface_of_type[32];         /* interface number SDL used, per entry in g_hk_types (index order) */
@@ -103,7 +104,8 @@ static void hk_push(int slot, int type, const Uint8 *data, int len, jlong reques
 JNIEXPORT void JNICALL Java_com_example_dsedge_NativeBridge_nativeSetHookup(JNIEnv *env, jclass c, jint on)
 {
     (void)env; (void)c;
-    atomic_store(&g_hookup_on, on ? 1 : 0);
+    atomic_store(&g_hookup_held, on == 2);   /* DroidDeck's desktop without Steam: wait (controllers stay gamepads) */
+    atomic_store(&g_hookup_on, on == 1);
 }
 
 /* DroidDeck handed over its shared hook-up file (any thread). Returns 0 when the fast path is on. */
