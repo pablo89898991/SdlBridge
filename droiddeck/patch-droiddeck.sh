@@ -1954,10 +1954,11 @@ if [ "${SDL3_EMBED_BRIDGE:-0}" = 1 ]; then
     { [ -f "$sdl/CMakeLists.txt" ] && [ -f "$sdl/android-project/app/src/main/java/org/libsdl/app/SDLActivity.java" ]; } ||
       { rm -rf "$tmp"; die "the SDL3 archive does not look like SDL3's source"; }
     rm -rf "$EMB/SDL" && mkdir -p "$EMB/SDL"
-    # everything SDL's CMake build uses; not its tests, examples, docs or IDE projects
+    # everything SDL's CMake build uses; not its tests, examples, docs, IDE projects or its own Android app project
+    # (its Java classes are copied below; its Gradle wrapper jar would fail the build's wrapper validation)
     for item in "$sdl"/* "$sdl"/.git-hash; do
       [ -e "$item" ] || continue
-      case "$(basename "$item")" in test|examples|docs|VisualC|VisualC-GDK|Xcode|AGENTS.md|CLAUDE.md) continue ;; esac
+      case "$(basename "$item")" in test|examples|docs|VisualC|VisualC-GDK|Xcode|android-project|AGENTS.md|CLAUDE.md) continue ;; esac
       cp -R "$item" "$EMB/SDL/"
     done
     echo "$SDL_VERSION" > "$EMB/SDL/.sdl3-version"
@@ -1966,6 +1967,9 @@ if [ "${SDL3_EMBED_BRIDGE:-0}" = 1 ]; then
     rm -rf "$tmp"
     ok "SDL3 $SDL_VERSION source (SHA-256 checked) and its Android classes"
   fi
+  # no second Gradle project or wrapper jar in the tree (gradle/actions only accepts the known wrapper jars)
+  rm -rf "$EMB/SDL/android-project"
+  find "$EMB" -name 'gradle-wrapper.jar' -delete
   # SDL3 would also look for Bluetooth Steam Controllers: DroidDeck has its own Bluetooth Steam Controller support,
   # and the bridge reads controllers over USB / through Android's input -- so SDL3 leaves Bluetooth alone here.
   res=$(python3 - "$JAVA/org/libsdl/app/HIDDeviceManager.java" <<'PY'
