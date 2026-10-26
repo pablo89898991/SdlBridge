@@ -1117,56 +1117,83 @@ fi
 
 # ---------- 16. "Game thread boost" switch in the session drawer (Latency group) ----------
 # DroidDeck already had a gameThreadHints preference (default on) but no switch for it. Add one next to
-# the low-latency switches; it takes effect immediately (starts/stops the boosting in the running session).
+# the low-latency switch(es); it takes effect immediately (starts/stops the boosting in the running session).
+# Two parts, each all-or-nothing: the preference setter + strings (step 17 needs them too), then the drawer row.
+# Upstream merged its "Low-latency controller" / "Low-latency touch" switches into one "Low latency mode"; the
+# row goes after whichever of them is there.
 SP="$PKG/session/SessionPrefs.kt"
 SO="$PKG/ui/SessionOverlay.kt"
 SA="$PKG/SessionActivity.kt"
 STR="$DD/app/src/main/res/values/strings.xml"
+GTH_BASE=0
 if [ -f "$SP" ] && [ -f "$SO" ] && [ -f "$SA" ] && [ -f "$STR" ]; then
-  if python3 - "$SP" "$SO" "$SA" "$STR" <<'PY'
+  python3 - "$SP" "$STR" <<'PY'
 import sys
-sp, so, sa, st = sys.argv[1:5]
-def patch(path, edits):
-    s = open(path, encoding='utf-8').read()
-    for old, new, marker in edits:
+sp, st = sys.argv[1:3]
+out = {}
+def plan(path, edits):
+    s = out.get(path) or open(path, encoding='utf-8').read()
+    for anchors, add, marker in edits:
         if marker in s:
             continue
-        if s.count(old) != 1:
-            sys.stderr.write("ANCHOR-MISS %s :: %r (found %d)\n" % (path, old[:70], s.count(old)))
+        hit = [a for a in anchors if s.count(a) == 1]
+        if not hit:
+            sys.stderr.write("ANCHOR-MISS %s :: %r\n" % (path, anchors[0][:70]))
             sys.exit(3)
-        s = s.replace(old, new, 1)
+        s = s.replace(hit[0], hit[0] + add if not add.startswith('\0') else add[1:] + hit[0], 1)
+    out[path] = s
+plan(sp, [(['    fun gameThreadHints(context: Context): Boolean = prefs(context).getBoolean("gameThreadHints", true)\n'],
+           '\n    fun setGameThreadHints(context: Context, on: Boolean) {\n'
+           '        prefs(context).edit().putBoolean("gameThreadHints", on).apply()\n'
+           '    }\n',
+           'fun setGameThreadHints(')])
+plan(st, [(['</resources>'],
+           '\0    <string name="drawer_game_thread_hints">Game thread boost</string>\n'
+           '    <string name="drawer_game_thread_hints_hint">Moves the busiest game threads to the fastest CPU cores (Android performance hints). Turn off if a game paces worse.</string>\n',
+           'drawer_game_thread_hints')])
+for path, s in out.items():
     open(path, 'w', encoding='utf-8').write(s)
-patch(sp, [(
-    '    fun gameThreadHints(context: Context): Boolean = prefs(context).getBoolean("gameThreadHints", true)\n',
-    '    fun gameThreadHints(context: Context): Boolean = prefs(context).getBoolean("gameThreadHints", true)\n\n'
-    '    fun setGameThreadHints(context: Context, on: Boolean) {\n'
-    '        prefs(context).edit().putBoolean("gameThreadHints", on).apply()\n'
-    '    }\n',
-    'fun setGameThreadHints(')])
-patch(so, [
-    ('    val onLowLatencyTouch: (Boolean) -> Unit = {},\n',
-     '    val onLowLatencyTouch: (Boolean) -> Unit = {},\n'
+PY
+  [ $? -eq 0 ] && GTH_BASE=1
+  if [ "$GTH_BASE" = 1 ] && python3 - "$SO" "$SA" <<'PY'
+import sys
+so, sa = sys.argv[1:3]
+out = {}
+def plan(path, edits):
+    s = out.get(path) or open(path, encoding='utf-8').read()
+    for anchors, add, marker in edits:
+        if marker in s:
+            continue
+        hit = [a for a in anchors if s.count(a) == 1]
+        if not hit:
+            sys.stderr.write("ANCHOR-MISS %s :: %r\n" % (path, anchors[0][:70]))
+            sys.exit(3)
+        s = s.replace(hit[0], hit[0] + add, 1)
+    out[path] = s
+plan(so, [
+    (['    val onLowLatency: (Boolean) -> Unit = {},\n',
+      '    val onLowLatencyTouch: (Boolean) -> Unit = {},\n'],
      '    val gameThreadHints: Boolean = true,\n'
      '    val onGameThreadHints: (Boolean) -> Unit = {},\n',
      'val onGameThreadHints:'),
-    ('                                    chipModifier = focus.track(page, "low-latency-touch"), onChange = a.onLowLatencyTouch)\n',
-     '                                    chipModifier = focus.track(page, "low-latency-touch"), onChange = a.onLowLatencyTouch)\n'
+    (['                                    chipModifier = focus.track(page, "low-latency"), onChange = a.onLowLatency)\n',
+      '                                    chipModifier = focus.track(page, "low-latency-touch"), onChange = a.onLowLatencyTouch)\n'],
      '                                ToggleRow(host, "game-thread-hints", stringResource(R.string.drawer_game_thread_hints),\n'
      '                                    stringResource(R.string.drawer_game_thread_hints_hint), a.gameThreadHints,\n'
      '                                    chipModifier = focus.track(page, "game-thread-hints"), onChange = a.onGameThreadHints)\n',
      '"game-thread-hints"'),
 ])
-patch(sa, [
-    ('    private var lowLatencyTouch by mutableStateOf(false)\n',
-     '    private var lowLatencyTouch by mutableStateOf(false)\n'
+plan(sa, [
+    (['    private var lowLatency by mutableStateOf(true)\n',
+      '    private var lowLatencyTouch by mutableStateOf(false)\n'],
      '    private var gameThreadHints by mutableStateOf(true)\n',
      'private var gameThreadHints by'),
-    ('        lowLatencyTouch = SessionPrefs.lowLatencyTouch(this)\n',
-     '        lowLatencyTouch = SessionPrefs.lowLatencyTouch(this)\n'
+    (['        lowLatency = SessionPrefs.lowLatency(this)\n',
+      '        lowLatencyTouch = SessionPrefs.lowLatencyTouch(this)\n'],
      '        gameThreadHints = SessionPrefs.gameThreadHints(this)\n',
      'gameThreadHints = SessionPrefs.gameThreadHints(this)'),
-    ('                    lowLatencyTouch = lowLatencyTouch,\n',
-     '                    lowLatencyTouch = lowLatencyTouch,\n'
+    (['                    lowLatency = lowLatency,\n',
+      '                    lowLatencyTouch = lowLatencyTouch,\n'],
      '                    gameThreadHints = gameThreadHints,\n'
      '                    onGameThreadHints = { on ->\n'
      '                        SessionPrefs.setGameThreadHints(this@SessionActivity, on)\n'
@@ -1176,16 +1203,11 @@ patch(sa, [
      '                    },\n',
      'onGameThreadHints = { on ->'),
 ])
-patch(st, [(
-    '</resources>',
-    '    <string name="drawer_game_thread_hints">Game thread boost</string>\n'
-    '    <string name="drawer_game_thread_hints_hint">Moves the busiest game threads to the fastest CPU cores (Android performance hints). Turn off if a game paces worse.</string>\n'
-    '</resources>',
-    'drawer_game_thread_hints')])
-print("OK")
+for path, s in out.items():
+    open(path, 'w', encoding='utf-8').write(s)
 PY
   then ok "session drawer: Game thread boost switch"
-  else die "Game thread boost switch: an upstream anchor moved (see ANCHOR-MISS above)."
+  else warn "Game thread boost switch left out: an upstream anchor moved (see ANCHOR-MISS above)."
   fi
 else
   warn "SessionPrefs/SessionOverlay/SessionActivity/strings.xml not found (skipping Game thread boost switch)"
@@ -1196,12 +1218,15 @@ PD="$PKG/ui/PerformanceDialog.kt"
 # The activity that holds the Performance page state (MainActivity.kt, renamed FrontEndActivity.kt upstream in
 # 0.6.0): whichever top-level activity has the gpuClockPin state.
 MA="$(grep -l 'private var gpuClockPin by mutableStateOf' "$PKG"/*.kt 2>/dev/null | head -1)"
-if [ -f "$PD" ] && [ -n "$MA" ] && [ -f "$MA" ]; then
+if [ "$GTH_BASE" != 1 ]; then
+  warn "Performance page switch left out (it needs step 16's preference and strings)"
+elif [ -f "$PD" ] && [ -n "$MA" ] && [ -f "$MA" ]; then
   if python3 - "$PD" "$MA" <<'PY'
 import sys
 pd, ma = sys.argv[1], sys.argv[2]
+out = {}
 def patch(path, edits):
-    s = open(path, encoding='utf-8').read()
+    s = out.get(path) or open(path, encoding='utf-8').read()
     for old, new, marker in edits:
         if marker in s:
             continue
@@ -1209,7 +1234,7 @@ def patch(path, edits):
             sys.stderr.write("ANCHOR-MISS %s :: %r (found %d)\n" % (path, old[:70], s.count(old)))
             sys.exit(3)
         s = s.replace(old, new, 1)
-    open(path, 'w', encoding='utf-8').write(s)
+    out[path] = s
 patch(pd, [
     ('    gpuClockPin: Boolean,\n', '    gpuClockPin: Boolean,\n    gameThreadHints: Boolean = true,\n', 'gameThreadHints: Boolean = true,'),
     ('    onGpuClockPin: (Boolean) -> Unit,\n', '    onGpuClockPin: (Boolean) -> Unit,\n    onGameThreadHints: (Boolean) -> Unit = {},\n',
@@ -1237,10 +1262,11 @@ patch(ma, [
      '        gpuClockPin = SessionPrefs.gpuClockPin(this)\n        gameThreadHints = SessionPrefs.gameThreadHints(this)\n',
      'gameThreadHints = SessionPrefs.gameThreadHints(this)'),
 ])
-print("OK")
+for path, s in out.items():
+    open(path, 'w', encoding='utf-8').write(s)
 PY
   then ok "Settings -> Performance: Game thread boost switch"
-  else die "Performance page switch: an upstream anchor moved (see ANCHOR-MISS above)."
+  else warn "Performance page switch left out: an upstream anchor moved (see ANCHOR-MISS above)."
   fi
 else
   warn "PerformanceDialog.kt / the activity with the Performance page state not found (skipping Performance page switch)"
@@ -1714,6 +1740,9 @@ s = open(path, encoding='utf-8').read()
 if 'rt_real(' in s:
     print("SKIP")
     sys.exit(0)
+if 'RTLD_NOLOAD' in s and 'libXtst' in s:
+    print("UPSTREAM")  # upstream does the same itself now (rt_xtst)
+    sys.exit(0)
 helper = '''/* sdl3deck: the real XTest function. Steam's client library links libXtst privately, so from a preload it is
  * often not "next" (RTLD_NEXT finds nothing and the call would be dropped): then take it from libXtst itself. */
 static void *rt_real(const char *name) {
@@ -1747,6 +1776,7 @@ PY
   case "$res" in
     OK) ok "Steam Input mouse clicks reach games (Remote Play touch shim finds the real XTest)" ;;
     SKIP) skip "Remote Play touch shim XTest lookup" ;;
+    UPSTREAM) ok "Steam Input mouse clicks reach games (upstream's Remote Play touch shim finds the real XTest itself)" ;;
     *) warn "Remote Play touch shim left as upstream (rptouch.c changed, see ANCHOR-MISS above)" ;;
   esac
 fi
@@ -2185,6 +2215,93 @@ PY
     SKIP) skip "proot build: talloc sources" ;;
     *) warn "proot build left as upstream (tools/proot/build.sh changed, see ANCHOR-MISS above)" ;;
   esac
+fi
+
+# ---------- 32. Windows components for programs on the desktop ----------
+# DroidDeck's desktop runs any Windows program with Proton (droiddeck-open -> droiddeck-proton-run), each in its own
+# prefix, but its Windows components (Visual C++ runtimes, DirectX extras, .NET, XNA, ...) could only be picked for
+# games in its library. Now a right-click on a Windows program in the file manager has "Windows Components...": it opens
+# DroidDeck's own components window over the desktop for that program's prefix (same catalog, recommendations and
+# downloads as the game settings), and DroidDeck adds the picks the next time the program starts, as for a game.
+# Guest side: droiddeck-windows-components (the entry, and the request it writes; staged into the desktop's root by
+# SessionFiles like DroidDeck's other desktop scripts, and set up by droiddeck-desktop at desktop start); app side:
+# DesktopComponents.kt (SessionService hands it the request, SessionActivity shows the window).
+SVC="$PKG/session/SessionService.kt"
+SFILES="$PKG/session/SessionFiles.kt"
+SAKT="$PKG/SessionActivity.kt"
+DESK="$DD/tools/linuxfs/desktop/droiddeck-desktop"
+OVL="$DD/tools/linuxfs/overlay/usr/local/bin"
+if [ -f "$SRC/DesktopComponents.kt" ] && [ -f "$SRC/droiddeck-windows-components" ] && [ -f "$SVC" ] && [ -f "$SFILES" ] \
+   && [ -f "$SAKT" ] && [ -f "$DESK" ] && [ -d "$OVL" ]; then
+  res=$(python3 - "$SVC" "$SAKT" "$SFILES" "$DESK" <<'PY'
+import sys
+svc, sa, sf, desk = sys.argv[1:5]
+texts = {p: open(p, encoding='utf-8').read() for p in (svc, sa, sf, desk)}
+STAGE = '"usr/local/bin/droiddeck-windows-components" to "usr/local/bin/droiddeck-windows-components",\n'
+OPEN_INSTALL = "python3 /usr/local/bin/droiddeck-open --install 2>&1 | sed 's/^/[open] /'\n"
+edits = [
+    # SessionService: the request from the desktop
+    (svc, 'DesktopComponents.request(',
+     ['                if (path != null && path.startsWith("desktop-import-") && path.endsWith(".request")) {\n'],
+     lambda hit:
+         '                if (path != null && path.startsWith("wincomponents-") && path.endsWith(".request")) {  // sdl3deck\n'
+         '                    val request = File(dir, path)\n'
+         '                    val text = runCatching { request.readText() }.getOrNull() ?: return\n'
+         '                    request.delete()\n'
+         '                    com.droiddeck.launcher.session.DesktopComponents.request(this@SessionService, text)\n'
+         '                    return\n'
+         '                }\n' + hit),
+    # SessionActivity: the window over the session
+    (sa, 'DesktopComponents.asked',
+     ['                com.droiddeck.launcher.ui.AchievementNotificationOverlay()\n'],
+     lambda hit: hit +
+         '                com.droiddeck.launcher.session.DesktopComponents.asked?.let { ask ->  // sdl3deck: a desktop program\'s Windows components\n'
+         '                    androidx.compose.runtime.key(ask) {  // a new request gets a fresh window\n'
+         '                        LaunchedEffect(ask) { releasePads() }\n'
+         '                        com.droiddeck.launcher.ui.WinComponentsDialog(ask.appKey, ask.name, ask.gameDir, false, compat = ask.compat) {\n'
+         '                            if (com.droiddeck.launcher.session.DesktopComponents.asked === ask) com.droiddeck.launcher.session.DesktopComponents.asked = null\n'
+         '                        }\n'
+         '                    }\n'
+         '                }\n'),
+    # SessionFiles: the guest script is staged into the root with the desktop's (else with DroidDeck's other) scripts
+    (sf, 'usr/local/bin/droiddeck-windows-components',
+     ['        "usr/local/bin/droiddeck-desktop-window-rules" to "usr/local/bin/droiddeck-desktop-window-rules",\n',
+      '            "usr/local/bin/droiddeck-open" to "usr/local/bin/droiddeck-open",\n'],
+     lambda hit: hit + hit[:len(hit) - len(hit.lstrip())] + STAGE),
+    # droiddeck-desktop: the file manager entry is set up at every desktop start, next to droiddeck-open's
+    (desk, 'droiddeck-windows-components --install',
+     [OPEN_INSTALL],
+     lambda hit: hit + "python3 /usr/local/bin/droiddeck-windows-components --install 2>&1 | sed 's/^/[wincomp] /'\n"),
+]
+done = 0
+for path, marker, anchors, make in edits:
+    s = texts[path]
+    if marker in s:
+        done += 1
+        continue
+    hit = [a for a in anchors if s.count(a) == 1]
+    if not hit:
+        sys.stderr.write("ANCHOR-MISS %s :: %r\n" % (path.rsplit('/', 1)[-1], anchors[0][:70]))
+        sys.exit(3)
+    texts[path] = s.replace(hit[0], make(hit[0]), 1)
+if done == len(edits):
+    print("SKIP"); sys.exit(0)
+for path, text in texts.items():
+    open(path, 'w', encoding='utf-8').write(text)
+print("OK")
+PY
+)
+  case "$res" in
+    OK|SKIP)
+      cp "$SRC/DesktopComponents.kt" "$PKG/session/DesktopComponents.kt"
+      install -m755 "$SRC/droiddeck-windows-components" "$OVL/droiddeck-windows-components"
+      [ "$res" = OK ] && ok "desktop: Windows Components... for Windows programs (DroidDeck's components window, per prefix)" \
+                      || skip "desktop Windows components"
+      ;;
+    *) warn "desktop Windows components left out (SessionService / SessionActivity / SessionFiles / droiddeck-desktop changed, see ANCHOR-MISS above)" ;;
+  esac
+else
+  warn "desktop Windows components: DroidDeck files or DesktopComponents.kt / droiddeck-windows-components not found (left out)"
 fi
 
 echo

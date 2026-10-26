@@ -25,7 +25,11 @@ SDL3Bridge is for **every SDL3-supported controller** (USB or Bluetooth, any ven
 
 ## DroidDeck integration
 - Thin fork: every DroidDeck change is made by `droiddeck/patch-droiddeck.sh` (exact anchors; a feature is left
-  out with a warning rather than breaking the build). Check changes against the newest upstream.
+  out with a warning rather than breaking the build). Check changes against the newest upstream: run the whole
+  patcher on a fresh clone of upstream main in both modes (plain and `SDL3_EMBED_BRIDGE=1`), twice (the second run
+  must change nothing), and fix every TODO / ERROR. Optional features: all edits of a feature are computed first
+  and written only when every anchor matched (never half a feature), and a miss is `warn`, not `die`.
+- When upstream fixes something the patcher fixed, detect it and leave upstream's version (e.g. step 28).
 - Upstream's CI sometimes downloads pinned files from the release of the repo being built (`$GITHUB_REPOSITORY`).
   The fork has no such releases: fetch them from upstream's release instead (keeping upstream's SHA-256 check).
 - Wrapping a library function from a preload (`LD_PRELOAD` / `/etc/ld.so.preload`): never rely on

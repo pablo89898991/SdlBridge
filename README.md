@@ -209,6 +209,28 @@ running on the desktop`, and the bridge's `hookup: DroidDeck's desktop has no St
 app: the bridge without this ignores the desktop flag (hook-up stays on, as before); DroidDeck without it keeps
 the desktop as upstream (Xbox 360 pads).
 
+## Windows components for programs on the desktop
+
+DroidDeck's desktop runs any Windows program (`.exe` / `.msi`) with Proton -- DroidDeck's own Wine -- each in its
+own prefix (a Steam game's, the prefix the file sits in, or one of its own). Its Windows components (Visual C++
+runtimes, DirectX extras, .NET, XNA, fonts, ...) could only be picked for games in DroidDeck's library. Now:
+
+1. In the desktop's file manager, right-click the program -> **Windows Components...**
+2. DroidDeck's own **Windows components** window opens over the desktop for that program's prefix: the same
+   catalog, recommendations (from the files in the program's folder) and downloads as a game's settings.
+3. Pick what it needs. DroidDeck adds it to the prefix the next time the program starts (as it does for a game),
+   so close the program first if it is running.
+
+The picks stay with the prefix, so every program that runs in it gets them; a Steam game's picks are the same as in
+its game settings. Touch works in the window, and so does a controller DroidDeck reads itself; a controller the
+SDL3 bridge streams (present-as types, Hook-up) keeps driving the desktop meanwhile, so use touch there.
+
+How: `droiddeck-windows-components` in the desktop (installed by the patcher, step 32) adds the file manager entry
+at desktop start, finds the program's prefix the way Run does (`droiddeck-proton-run`), and writes
+`wincomponents-<prefix id>.request` into the session's launch folder; DroidDeck's session watches that folder and
+shows the window (`DesktopComponents.kt`). DroidDeck's `droiddeck-game-env` puts the picks in whenever a program
+starts in that prefix. Log line (session log): `desktop: Windows components for "<name>" (prefix <id>)`.
+
 ## Steam Controller (2026) over USB cable or wireless puck
 
 Plug a Steam Controller (2026) in with a cable (28de:1302), or plug in its wireless puck (28de:1304/1305), and
@@ -359,6 +381,7 @@ functions with `dlsym(RTLD_NEXT)`. Steam's client library links libXtst privatel
 game, with any controller and in every mode, while keys and relative mouse movement (gyro / joystick mouse, other
 XTest calls) still worked. The patcher (step 28) makes that shim take the real functions from libXtst itself when
 they are not next in line. Reproduced and verified with upstream's own library in a stand-in for Steam's loading.
+Upstream DroidDeck now does the same itself (`rt_xtst`); the patcher sees that and leaves its shim as it is.
 
 ## Controller-driven mouse works out of the box
 
