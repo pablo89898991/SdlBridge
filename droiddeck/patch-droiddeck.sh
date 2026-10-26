@@ -2304,5 +2304,76 @@ else
   warn "desktop Windows components: DroidDeck files or DesktopComponents.kt / droiddeck-windows-components not found (left out)"
 fi
 
+# ---------- 33. Wine without Steam, and a Wine menu on the desktop ----------
+# Windows programs run with an ARM64 Proton. DroidDeck's own tool starts the one the Steam client downloads, so with
+# no Steam (never installed, not signed in, Proton not downloaded yet) neither a program on the desktop nor a game's
+# "Start without Steam" could start. droiddeck-proton-run now asks droiddeck-wine: when its pick is that tool and
+# Steam's ARM64 Proton is missing, the newest installed DroidDeck-Proton (Wine + FEX; else another ARM64 Proton)
+# runs it, and when there is none, DroidDeck-Proton is downloaded once from its release (droiddeck-proton-extra,
+# checksum checked). Steam's own picks are untouched while its Proton is there.
+# The desktop gets a "Wine" menu: a shared C: drive (one prefix) for programs one installs, Install a Windows
+# Program..., Wine Configuration, Windows Components, Uninstall Programs, Registry Editor, File Manager, Command
+# Prompt, Task Manager, Game Controllers, and Programs (the Start menu shortcuts its installers made); the file
+# manager gets "Run in Wine's C: Drive" for Windows programs.
+PRUN="$DD/tools/linuxfs/overlay/usr/local/bin/droiddeck-proton-run"
+SFILES="$PKG/session/SessionFiles.kt"
+DESK="$DD/tools/linuxfs/desktop/droiddeck-desktop"
+OVL="$DD/tools/linuxfs/overlay/usr/local/bin"
+if [ -f "$SRC/droiddeck-wine" ] && [ -f "$PRUN" ] && [ -f "$SFILES" ] && [ -f "$DESK" ] && [ -d "$OVL" ]; then
+  res=$(python3 - "$PRUN" "$SFILES" "$DESK" <<'PY'
+import sys
+prun, sf, desk = sys.argv[1:4]
+texts = {p: open(p, encoding='utf-8').read() for p in (prun, sf, desk)}
+OPEN_INSTALL = "python3 /usr/local/bin/droiddeck-open --install 2>&1 | sed 's/^/[open] /'\n"
+edits = [
+    # droiddeck-proton-run: a Wine that needs no Steam when its pick needs Steam's Proton
+    (prun, 'droiddeck-wine',
+     ['    name, why = choose_tool(target.appid, mapping(root), available)\n'],
+     lambda hit: hit +
+         '    try:  # sdl3deck: no Steam needed -- DroidDeck\'s own Wine when Steam\'s ARM64 Proton isn\'t there\n'
+         '        name, why, available = runpy.run_path(os.path.join(BIN_DIR, "droiddeck-wine"), run_name="droiddeck_wine")[\n'
+         '            "usable_tool"](root, name, why, available, tools)\n'
+         '    except Exception as error:\n'
+         '        say("droiddeck-wine: %s" % error)\n'),
+    # SessionFiles: staged in every session (a game's Start without Steam needs it too)
+    (sf, 'usr/local/bin/droiddeck-wine"',
+     ['            "usr/local/bin/droiddeck-proton-run" to "usr/local/bin/droiddeck-proton-run",\n'],
+     lambda hit: hit + '            "usr/local/bin/droiddeck-wine" to "usr/local/bin/droiddeck-wine",\n'),
+    # droiddeck-desktop: the Wine menu is set up at every desktop start
+    (desk, 'droiddeck-wine --install',
+     [OPEN_INSTALL],
+     lambda hit: hit + "python3 /usr/local/bin/droiddeck-wine --install 2>&1 | sed 's/^/[wine] /'\n"),
+]
+done = 0
+for path, marker, anchors, make in edits:
+    s = texts[path]
+    if marker in s:
+        done += 1
+        continue
+    hit = [a for a in anchors if s.count(a) == 1]
+    if not hit:
+        sys.stderr.write("ANCHOR-MISS %s :: %r\n" % (path.rsplit('/', 1)[-1], anchors[0][:70]))
+        sys.exit(3)
+    texts[path] = s.replace(hit[0], make(hit[0]), 1)
+if done == len(edits):
+    print("SKIP"); sys.exit(0)
+for path, text in texts.items():
+    open(path, 'w', encoding='utf-8').write(text)
+print("OK")
+PY
+)
+  case "$res" in
+    OK|SKIP)
+      install -m755 "$SRC/droiddeck-wine" "$OVL/droiddeck-wine"
+      [ -f "$SRC/droiddeck-windows-components" ] && install -m755 "$SRC/droiddeck-windows-components" "$OVL/droiddeck-windows-components"
+      [ "$res" = OK ] && ok "Wine without Steam (DroidDeck-Proton) + the desktop's Wine menu and shared C: drive" \
+                      || skip "Wine without Steam + desktop Wine menu"
+      ;;
+    *) warn "Wine without Steam / Wine menu left out (droiddeck-proton-run / SessionFiles / droiddeck-desktop changed, see ANCHOR-MISS above)" ;;
+  esac
+else
+  warn "Wine without Steam: DroidDeck files or droiddeck-wine not found (left out)"
+fi
+
 echo
 echo "Done. Review with:  cd \"$DD\" && git diff"

@@ -231,6 +231,41 @@ at desktop start, finds the program's prefix the way Run does (`droiddeck-proton
 shows the window (`DesktopComponents.kt`). DroidDeck's `droiddeck-game-env` puts the picks in whenever a program
 starts in that prefix. Log line (session log): `desktop: Windows components for "<name>" (prefix <id>)`.
 
+## Wine without Steam, and a Wine menu on the desktop
+
+DroidDeck runs Windows programs with an ARM64 Proton (Wine with FEX). Its own compatibility tool starts the ARM64
+Proton the Steam client downloads, so without Steam -- never installed, not signed in, or Proton not downloaded
+yet -- a Windows program on the desktop (or a game's "Start without Steam") did not start ("open Steam once").
+
+**No Steam needed now.** When DroidDeck's pick is that tool and Steam's ARM64 Proton is not there, the newest
+installed **DroidDeck-Proton** (Wine 11 with FEX, built for DroidDeck; else another ARM64 Proton in
+`compatibilitytools.d`) runs the program instead. When there is none, DroidDeck-Proton is downloaded once from its
+GitHub release (`droiddeck-proton-extra`, SHA-512 checked, needs about 4 GB free) -- a notification says so, and the
+program starts when it's ready. Steam's own choices are untouched while its Proton is there; DroidDeck's Proton page
+updates DroidDeck-Proton as before.
+
+**The desktop's Wine menu** (application menu -> Wine):
+
+| Entry | What it does |
+|---|---|
+| Install a Windows Program... | runs an installer (`.exe` / `.msi`) in Wine's **shared C: drive** |
+| C: Drive | the shared C: drive in the file manager |
+| Programs | what the installers put in the Start menu, started like a double-click |
+| Wine Configuration, Registry Editor, File Manager, Command Prompt, Task Manager | Wine's own tools (`winecfg`, `regedit`, `winefile`, `cmd`, `taskmgr`) |
+| Uninstall Programs | Wine's uninstaller |
+| Game Controllers | the controllers Windows programs see (`joy.cpl`) |
+| Windows Components | DroidDeck's components window for the shared C: drive (Visual C++, DirectX, .NET, XNA...) |
+
+The shared C: drive is one prefix (`compatdata/3589834995`) for programs you install, apart from every game's own;
+a program inside it runs in it from the file manager too. In the file manager, right-click a Windows program ->
+**Run in Wine's C: Drive** to install it there. Wine's tools open in a desktop window; programs started from
+Programs run on the GPU as other desktop programs do.
+
+How: `droiddeck-wine` in the desktop (installed by the patcher, step 33; staged in every session, as a game's Start
+without Steam needs it too). `droiddeck-proton-run` asks its `usable_tool()` after choosing a tool. Log lines:
+`droiddeck-wine: no ARM64 Wine that runs without Steam; downloading DroidDeck-Proton`, and `droiddeck-proton-run:
+... with DroidDeck-Proton-... (Steam's ARM64 Proton isn't downloaded, so DroidDeck's own Wine)`.
+
 ## Steam Controller (2026) over USB cable or wireless puck
 
 Plug a Steam Controller (2026) in with a cable (28de:1302), or plug in its wireless puck (28de:1304/1305), and

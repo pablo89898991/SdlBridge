@@ -43,6 +43,10 @@ SDL3Bridge is for **every SDL3-supported controller** (USB or Bluetooth, any ven
   program among others, may not be running, and may be the x86-64 client under FEX. There the Steam client, games
   Steam starts and other desktop programs each see different controller nodes (step 29, `FAKE_EVDEV_DESKTOP`), and
   Hook-up waits for the Steam client's heartbeat. Check a controller change in both kinds of session.
+- Windows programs: `droiddeck-proton-run` picks the Proton; `droiddeck-wine` (step 33) replaces a pick that needs
+  Steam's ARM64 Proton when it isn't downloaded (DroidDeck-Proton, downloaded once if missing) and makes the desktop's
+  Wine menu (shared C: drive = compatdata/3589834995). Windows components for desktop programs: step 32. Never make
+  Windows programs depend on the Steam client.
 - The merged app "SDLApiDroidDeck" (repo name; app label SDL3DroidDeck, app ID com.droiddeck.launcher):
   `newfork/PLAN.md`, its workflows `newfork/sync.yml` + `newfork/build.yml` + `newfork/publish.yml` (releases),
   README `newfork/README.md`. The bridge
