@@ -255,6 +255,7 @@ updates DroidDeck-Proton as before.
 | Uninstall Programs | Wine's uninstaller |
 | Game Controllers | the controllers Windows programs see (`joy.cpl`) |
 | Windows Components | DroidDeck's components window for the shared C: drive (Visual C++, DirectX, .NET, XNA...) |
+| Update Wine | the newest DroidDeck-Proton, if it is newer than the installed one (works while the session runs) |
 
 The shared C: drive is one prefix (`compatdata/3589834995`) for programs you install, apart from every game's own;
 a program inside it runs in it from the file manager too. In the file manager, right-click a Windows program ->
@@ -265,6 +266,21 @@ How: `droiddeck-wine` in the desktop (installed by the patcher, step 33; staged 
 without Steam needs it too). `droiddeck-proton-run` asks its `usable_tool()` after choosing a tool. Log lines:
 `droiddeck-wine: no ARM64 Wine that runs without Steam; downloading DroidDeck-Proton`, and `droiddeck-proton-run:
 ... with DroidDeck-Proton-... (Steam's ARM64 Proton isn't downloaded, so DroidDeck's own Wine)`.
+
+## Settings -> Wine: keep Wine (Proton) up to date
+
+DroidDeck installs and updates its own Protons -- DroidDeck-Proton, and GE-Proton / Proton-CachyOS when installed --
+by itself (hourly check, Components page). Settings now has a **Wine** tab:
+
+- each of them with the installed version and the newest release, and **Install** / **Update** (download, checksum,
+  the old version's components, settings and per-game picks carried over: DroidDeck's own installer);
+- **Check for updates** -> **Check now** (instead of waiting for the hourly check), with the time of the last one;
+- **Update automatically** (on, as before): off, DroidDeck installs new versions only when you tap Update;
+- Steam's ARM64 Proton is listed as updated by Steam.
+
+Like DroidDeck's own updater it waits until no session runs (the tab says so). On the desktop, **Wine -> Update Wine**
+updates DroidDeck-Proton meanwhile: the new version is unpacked next to the old one, programs started from then on use
+it, and DroidDeck removes the old one later (patcher step 34; the desktop entry is `droiddeck-wine update`, step 33).
 
 ## Steam Controller (2026) over USB cable or wireless puck
 

@@ -2375,5 +2375,97 @@ else
   warn "Wine without Steam: DroidDeck files or droiddeck-wine not found (left out)"
 fi
 
+# ---------- 34. Settings -> Wine: keep Wine (Proton) up to date ----------
+# DroidDeck installs and updates its own Protons (ProtonExtras: DroidDeck-Proton, GE-Proton, Proton-CachyOS) by itself,
+# hourly and only in its Components page. A "Wine" tab in Settings shows what is installed and the newest release of
+# each, checks now, updates on request, and has "Update automatically" (off = only on request; it gates
+# ProtonMenu.ensureAutoUpdates). Installing is ProtonExtras' own. On the desktop, Wine -> Update Wine (droiddeck-wine,
+# step 33) updates DroidDeck-Proton while a session runs. Built only from DroidDeck's own widgets and ProtonExtras'
+# functions: if any of them changes, the tab is left out (with a warning).
+UI="$PKG/ui"
+FES="$UI/FrontEndSetup.kt"
+PMENU="$PKG/ProtonMenu.kt"
+PEX="$PKG/session/ProtonExtras.kt"
+if [ -f "$SRC/WineSettings.kt" ] && [ -f "$FES" ] && [ -f "$PMENU" ] && [ -f "$PEX" ] && [ -d "$UI" ]; then
+  res=$(python3 - "$UI" "$SRC/WineSettings.kt" "$FES" "$PMENU" "$PEX" "$PKG/session/SessionState.kt" <<'PY'
+import os, re, sys
+ui, src, fes, pmenu, pex, state = sys.argv[1:7]
+everything = ""
+for name in os.listdir(ui):
+    if name.endswith(".kt") and name != "WineSettings.kt":
+        everything += open(os.path.join(ui, name), encoding="utf-8").read()
+extras = open(pex, encoding="utf-8").read()
+session = open(state, encoding="utf-8").read() if os.path.isfile(state) else ""
+needed = [
+    (everything, "fun SettingsGroup(title: String"),
+    (everything, "fun SettingsRow(label: String, hint: String?"),
+    (everything, "fun ToggleRow(host: MenuHost, key: String, label: String, hint: String?, checked: Boolean"),
+    (everything, "fun SecondaryButton(text: String, enabled: Boolean = true, compact: Boolean = false, modifier: Modifier = Modifier, progress: Float? = null, onClick: () -> Unit)"),
+    (extras, "fun installedAll(context: Context, tool: Tool): List<String>"),
+    (extras, "fun installedTags(context: Context, tool: Tool): List<String>"),
+    (extras, "fun update(context: Context, tool: Tool): String?"),
+    (extras, "fun missing(context: Context, tool: Tool): String?"),
+    (extras, "fun setDeclined(context: Context, declined: Boolean)"),
+    (extras, "fun cachedLatest(context: Context, tool: Tool): String?"),
+    (extras, "fun checkLatest(context: Context, force: Boolean = false"),
+    (extras, "fun install(context: Context, tool: Tool, onProgress: (String, Int) -> Unit): String?"),
+    (extras, "var installInProgress"),
+    (extras, 'const val OWN = '),
+    (extras, '"proton-latest.json"'),
+    (extras, "class Tool(val id: String, val name: String"),
+    (session, "var running"),
+]
+missing = [n for text, n in needed if n not in text]
+if missing:
+    sys.stderr.write("CHANGED " + " | ".join(missing) + "\n")
+    sys.exit(4)
+texts = {p: open(p, encoding="utf-8").read() for p in (fes, pmenu)}
+done = 0
+# the tab: its label last in the list, its page for the last index
+s = texts[fes]
+if "WineSettingsTab(host)" in s:
+    done += 1
+else:
+    lines = [l for l in s.splitlines(True) if l.startswith("    val tabs = listOf(") and "setup_tab_glasses" in l]
+    anchor = "                    GLASSES_TAB -> GlassesSetupPanel()\n"
+    if len(lines) != 1 or not lines[0].rstrip().endswith(")") or s.count(anchor) != 1 or "val host = rememberMenuHost()" not in s:
+        sys.stderr.write("ANCHOR-MISS FrontEndSetup.kt :: the Settings tabs (val tabs = listOf(... / GLASSES_TAB -> ...)\n")
+        sys.exit(3)
+    old = lines[0]
+    s = s.replace(old, old.rstrip()[:-1] + ', "Wine")\n', 1)
+    s = s.replace(anchor, anchor + "                    tabs.lastIndex -> WineSettingsTab(host)   // sdl3deck: Wine (Proton) updates\n", 1)
+    texts[fes] = s
+# "Update automatically" off: DroidDeck's own automatic updates wait
+s = texts[pmenu]
+if "WineUpdates.automatic(" in s:
+    done += 1
+else:
+    anchor = "    internal fun ensureAutoUpdates(now: Long = System.currentTimeMillis()) {\n"
+    if s.count(anchor) != 1:
+        sys.stderr.write("ANCHOR-MISS ProtonMenu.kt :: %r\n" % anchor[:70])
+        sys.exit(3)
+    texts[pmenu] = s.replace(anchor, anchor +
+        "        if (!com.droiddeck.launcher.ui.WineUpdates.automatic(activity)) return  // sdl3deck: Settings -> Wine\n", 1)
+dst = os.path.join(ui, "WineSettings.kt")
+body = open(src, encoding="utf-8").read()
+current = open(dst, encoding="utf-8").read() if os.path.exists(dst) else None
+if done == 2 and current == body:
+    print("SKIP"); sys.exit(0)
+for path, text in texts.items():
+    open(path, "w", encoding="utf-8").write(text)
+if current != body:
+    open(dst, "w", encoding="utf-8").write(body)
+print("OK")
+PY
+)
+  case "$res" in
+    OK) ok "Settings -> Wine: Wine (Proton) versions, Check now, Update, Update automatically" ;;
+    SKIP) skip "Settings -> Wine tab" ;;
+    *) warn "Settings -> Wine tab left out (DroidDeck's settings screen / ProtonMenu / ProtonExtras changed; see the line above)" ;;
+  esac
+else
+  warn "Settings -> Wine: WineSettings.kt or DroidDeck's settings / Proton files not found (left out)"
+fi
+
 echo
 echo "Done. Review with:  cd \"$DD\" && git diff"
