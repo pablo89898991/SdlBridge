@@ -267,6 +267,20 @@ without Steam needs it too). `droiddeck-proton-run` asks its `usable_tool()` aft
 `droiddeck-wine: no ARM64 Wine that runs without Steam; downloading DroidDeck-Proton`, and `droiddeck-proton-run:
 ... with DroidDeck-Proton-... (Steam's ARM64 Proton isn't downloaded, so DroidDeck's own Wine)`.
 
+## Easy Anti-Cheat games start offline (any bootstrapper name)
+
+Easy Anti-Cheat can't run under ARM64 Proton: its bootstrapper stops with "Easy Anti-Cheat Launch Error: Failed to
+initialize Wine helper buffer". DroidDeck starts the game's own executable instead ("Start without Easy Anti-Cheat",
+a per-game environment option, on by default; offline modes only) -- but only when the bootstrapper is named
+`start_protected_game.exe` and the settings file is spelled exactly `EasyAntiCheat/settings.json`. Many games rename
+the bootstrapper after the game and keep the real one elsewhere (`Binaries/Win64/...-Shipping.exe`, `..._EAC.exe`),
+and Windows file names ignore case. The patcher (step 35) widens the rule in `droiddeck-game-env`: the settings file
+and the executable are found whatever their case, a renamed bootstrapper is recognised by its contents (a small
+program that names EasyAntiCheat), and the settings' `parameters` are passed on as the bootstrapper would. Every
+launch path (Steam, Start without Steam, the desktop, Wine's C: drive) goes through it. Log line:
+`droiddeck-game-env: started without Easy Anti-Cheat (offline only): <game> instead of <bootstrapper>`. Online
+modes that need Easy Anti-Cheat stay unavailable.
+
 ## Settings -> Wine: keep Wine (Proton) up to date
 
 DroidDeck installs and updates its own Protons -- DroidDeck-Proton, and GE-Proton / Proton-CachyOS when installed --

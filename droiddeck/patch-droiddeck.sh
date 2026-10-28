@@ -261,16 +261,30 @@ YML
 fi
 
 # ---------- 8. RumbleComponent: route rumble to the bridged controller (not the phone) ----------
+# The check goes first in buzz(), right after DroidDeck's own "rumble off" (and, since upstream added it, "quiet") check.
 RC="$DD/app/src/main/java/com/droiddeck/launcher/session/RumbleComponent.kt"
 if [ -f "$RC" ]; then
-  if grep -q "DualSenseBridge.routeRumble" "$RC"; then
-    skip "RumbleComponent bridge routing"
-  elif grep -q "if (!enabled) return" "$RC"; then
-    sed -i '/if (!enabled) return/a\        if (com.droiddeck.launcher.input.DualSenseBridge.routeRumble(slot, strong, weak, ms)) return' "$RC"
-    grep -q "DualSenseBridge.routeRumble" "$RC" && ok "RumbleComponent bridge routing" || warn "RumbleComponent hook NOT inserted"
-  else
-    warn "RumbleComponent: add a DualSenseBridge.routeRumble(slot, strong, weak, ms) check at the top of buzz()"
-  fi
+  res=$(python3 - "$RC" <<'PY'
+import re, sys
+path = sys.argv[1]
+s = open(path, encoding="utf-8").read()
+if "DualSenseBridge.routeRumble" in s:
+    print("SKIP"); sys.exit(0)
+m = re.search(r"\n( *)(?:@Synchronized )?(?:private )?fun buzz\(strong: Int, weak: Int, ms: Int, slot: Int\) \{\n( *)if \(!enabled[^\n]*\) return\n", s)
+if not m:
+    sys.stderr.write("ANCHOR-MISS RumbleComponent.kt :: fun buzz(strong, weak, ms, slot) { if (!enabled...) return\n")
+    sys.exit(3)
+hook = m.group(2) + "if (com.droiddeck.launcher.input.DualSenseBridge.routeRumble(slot, strong, weak, ms)) return  // sdl3deck\n"
+s = s[:m.end()] + hook + s[m.end():]
+open(path, "w", encoding="utf-8").write(s)
+print("OK")
+PY
+)
+  case "$res" in
+    OK) ok "RumbleComponent bridge routing" ;;
+    SKIP) skip "RumbleComponent bridge routing" ;;
+    *) warn "RumbleComponent: add a DualSenseBridge.routeRumble(slot, strong, weak, ms) check at the top of buzz()" ;;
+  esac
 else
   warn "RumbleComponent.kt not found (skipping rumble routing)"
 fi
@@ -2465,6 +2479,48 @@ PY
   esac
 else
   warn "Settings -> Wine: WineSettings.kt or DroidDeck's settings / Proton files not found (left out)"
+fi
+
+# ---------- 35. Easy Anti-Cheat games start offline whatever the bootstrapper is called ----------
+# EAC can't run under ARM64 Proton ("Failed to initialize Wine helper buffer"). DroidDeck starts the game's own
+# executable instead (DROIDDECK_ANTICHEAT_OFFLINE, on by default) -- but only for a bootstrapper named
+# start_protected_game and an exactly spelled EasyAntiCheat/settings.json. droiddeck-game-env gets a wider rule
+# (game-env-eac.py): any case, a renamed bootstrapper told by its contents, the settings' parameters passed on.
+# Upstream's rule still runs first.
+GENV="$DD/tools/linuxfs/overlay/usr/local/bin/droiddeck-game-env"
+if [ -f "$SRC/game-env-eac.py" ] && [ -f "$GENV" ]; then
+  res=$(python3 - "$GENV" "$SRC/game-env-eac.py" <<'PY'
+import sys
+path, block_path = sys.argv[1:3]
+s = open(path, encoding="utf-8").read()
+block = open(block_path, encoding="utf-8").read()
+BEGIN, END = "# --- sdl3deck: Easy Anti-Cheat offline start", "# --- end sdl3deck ---"
+if BEGIN in s:
+    a = s.index(BEGIN)
+    b = s.index("\n", s.index(END, a)) + 1
+    while s[b:b + 1] == "\n":
+        b += 1
+    new = s[:a] + block + s[b:]
+    if new == s:
+        print("SKIP"); sys.exit(0)
+else:
+    anchor = "def engine_fixes(exe, args):\n"
+    if s.count(anchor) != 1 or "def offline_without_anticheat(command, env):" not in s[:s.find(anchor)]:
+        sys.stderr.write("ANCHOR-MISS droiddeck-game-env :: offline_without_anticheat / %r\n" % anchor)
+        sys.exit(3)
+    new = s.replace(anchor, block + anchor, 1)
+compile(new, path, "exec")
+open(path, "w", encoding="utf-8").write(new)
+print("OK")
+PY
+)
+  case "$res" in
+    OK) ok "Easy Anti-Cheat games start offline (any bootstrapper name, any file-name case)" ;;
+    SKIP) skip "Easy Anti-Cheat offline start" ;;
+    *) warn "Easy Anti-Cheat offline start left as upstream's (droiddeck-game-env changed, see ANCHOR-MISS above)" ;;
+  esac
+else
+  warn "droiddeck-game-env or game-env-eac.py not found (Easy Anti-Cheat offline start left as upstream's)"
 fi
 
 echo
