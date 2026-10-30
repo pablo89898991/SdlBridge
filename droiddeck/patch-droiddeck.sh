@@ -292,7 +292,7 @@ fi
 # ---------- 9. Add a native DualSense Edge (054c:0df2) as a SEPARATE pad type ----------
 # A standard DualSense (054c:0ce6) has no back buttons in its HID report; a DualSense Edge (054c:0df2)
 # does -- SDL/Steam read its 2 back paddles + 2 Fn buttons from one button byte. We add the Edge as its
-# own fake controller (new hidraw node 22, pad type 5) ALONGSIDE the untouched plain DualSense, and feed
+# own fake controller (new hidraw node 22, pad type 6; 5 is upstream's mouse ring) ALONGSIDE the untouched plain DualSense, and feed
 # the Deck grips into the Edge's extra-button bits. Plain DualSense (option "DualSense (native)") is kept.
 CPP="$DD/app/src/main/cpp/fakeinput_steam.cpp"
 SDP="$PKG/session/SteamDeckPad.kt"
@@ -319,8 +319,8 @@ def patch(path, edits):
 patch(fiw, [
     ('    public static final int PAD_TYPE_DUALSENSE = 4;',
      '    public static final int PAD_TYPE_DUALSENSE = 4;\n'
-     '    public static final int PAD_TYPE_DUALSENSE_EDGE = 5;',
-     'PAD_TYPE_DUALSENSE_EDGE = 5'),
+     '    public static final int PAD_TYPE_DUALSENSE_EDGE = 6;',
+     'PAD_TYPE_DUALSENSE_EDGE = 6'),
 ])
 
 # ---- SteamDeckPad.kt: new node (minor 22) + Edge identity; describeSony refactored to explicit params ----
@@ -355,9 +355,10 @@ patch(sdp, [
 
 # ---- fakeinput_steam.cpp: enum, node constants, every sony/pad-type branch, and the Edge button bits ----
 patch(cpp, [
-    ('PAD_TYPE_DUALSENSE = 4, PAD_TYPE_LAST = PAD_TYPE_DUALSENSE;',
-     'PAD_TYPE_DUALSENSE = 4, PAD_TYPE_DUALSENSE_EDGE = 5, PAD_TYPE_LAST = PAD_TYPE_DUALSENSE_EDGE;',
-     'PAD_TYPE_DUALSENSE_EDGE = 5'),
+    # upstream's PAD_TYPE_MOUSE = 5 (its raw mouse ring) follows LAST since 0.6.7: our types are 6.. and skip 5
+    ('PAD_TYPE_DUALSENSE = 4, PAD_TYPE_LAST = PAD_TYPE_DUALSENSE',
+     'PAD_TYPE_DUALSENSE = 4, PAD_TYPE_DUALSENSE_EDGE = 6, PAD_TYPE_LAST = PAD_TYPE_DUALSENSE_EDGE',
+     'PAD_TYPE_DUALSENSE_EDGE = 6'),
     ('static constexpr unsigned int DS4_HIDRAW_MINOR = 20, DUALSENSE_HIDRAW_MINOR = 21;',
      'static constexpr unsigned int DS4_HIDRAW_MINOR = 20, DUALSENSE_HIDRAW_MINOR = 21, DUALSENSE_EDGE_HIDRAW_MINOR = 22;\n'
      'static constexpr const char *DUALSENSE_EDGE_HIDRAW_PATH = "/dev/hidraw22";',
@@ -434,11 +435,11 @@ patch(cpp, [
      '       : type == PAD_TYPE_DUALSENSE_EDGE ? DUALSENSE_EDGE_HIDRAW_MINOR',
      'type == PAD_TYPE_DUALSENSE_EDGE ? DUALSENSE_EDGE_HIDRAW_MINOR'),
     ('                                 "DualShock 4", "DualSense"};',
-     '                                 "DualShock 4", "DualSense", "DualSense Edge"};',
-     ('"DualSense", "DualSense Edge"}', '"Steam Controller (2015)"}', '"no pad"}')),
+     '                                 "DualShock 4", "DualSense", "mouse", "DualSense Edge"};',
+     ('"mouse", "DualSense Edge"',)),
     ('kNames[was % 5]',
-     'kNames[was % 6]',
-     ('kNames[was % 6]', 'kNames[was % 7]', 'kNames[was % 8]')),
+     'kNames[was % 7]',
+     ('kNames[was % 7]', 'kNames[was % 8]', 'kNames[was % 9]')),
     # Sony touchpad (DualShock 4, DualSense, DualSense Edge): one full-width multitouch surface, never
     # the Deck's two halves. A real Sony pad is a single surface where finger 0 is the primary touch,
     # so confining finger 1 to the right half loses any touch that lands on it alone. put_sony_touch is
@@ -611,10 +612,10 @@ def patch(path, edits):
 
 # ---- FakeInputWriter.java ----
 patch(fiw, [
-    ('    public static final int PAD_TYPE_DUALSENSE_EDGE = 5;',
-     '    public static final int PAD_TYPE_DUALSENSE_EDGE = 5;\n'
-     '    public static final int PAD_TYPE_STEAM_2015 = 6;',
-     'PAD_TYPE_STEAM_2015 = 6'),
+    ('    public static final int PAD_TYPE_DUALSENSE_EDGE = 6;',
+     '    public static final int PAD_TYPE_DUALSENSE_EDGE = 6;\n'
+     '    public static final int PAD_TYPE_STEAM_2015 = 7;',
+     'PAD_TYPE_STEAM_2015 = 7'),
 ])
 
 # ---- SteamDeckPad.kt: /dev/hidraw23 described as 28de:1102 interface 2 ----
@@ -785,10 +786,10 @@ patch(cpp, [
     ('  bool emulated = false;\n  uint8_t sony = 0;\n};',
      '  bool emulated = false;\n  uint8_t sony = 0;\n  bool sc1 = false;  // sdl3bridge: Steam Controller (2015)\n};',
      'bool sc1 = false;'),
-    ('PAD_TYPE_DUALSENSE_EDGE = 5, PAD_TYPE_LAST = PAD_TYPE_DUALSENSE_EDGE;',
-     'PAD_TYPE_DUALSENSE_EDGE = 5,\n'
-     '                          PAD_TYPE_STEAM_2015 = 6, PAD_TYPE_LAST = PAD_TYPE_STEAM_2015;',
-     'PAD_TYPE_STEAM_2015 = 6'),
+    ('PAD_TYPE_DUALSENSE_EDGE = 6, PAD_TYPE_LAST = PAD_TYPE_DUALSENSE_EDGE',
+     'PAD_TYPE_DUALSENSE_EDGE = 6,\n'
+     '                          PAD_TYPE_STEAM_2015 = 7, PAD_TYPE_LAST = PAD_TYPE_STEAM_2015',
+     'PAD_TYPE_STEAM_2015 = 7'),
     ('static constexpr const char *DUALSENSE_EDGE_HIDRAW_PATH = "/dev/hidraw22";\n',
      'static constexpr const char *DUALSENSE_EDGE_HIDRAW_PATH = "/dev/hidraw22";\n'
      'static constexpr const char *SC1_HIDRAW_PATH = "/dev/hidraw23";\n'
@@ -899,12 +900,12 @@ patch(cpp, [
      '       : type == PAD_TYPE_STEAM ? TRITON_PAD_HIDRAW_MINOR\n'
      '       : type == PAD_TYPE_STEAM_2015 ? SC1_HIDRAW_MINOR : DECK_HIDRAW_MINOR;',
      'type == PAD_TYPE_STEAM_2015 ? SC1_HIDRAW_MINOR'),
-    ('"DualSense", "DualSense Edge"};',
-     '"DualSense", "DualSense Edge",\n                                 "Steam Controller (2015)"};',
+    ('"mouse", "DualSense Edge"};',
+     '"mouse", "DualSense Edge",\n                                 "Steam Controller (2015)"};',
      ('"Steam Controller (2015)"};', '"Steam Controller (2015)", "no pad"};')),
-    ('kNames[was % 6]',
-     'kNames[was % 7]',
-     ('kNames[was % 7]', 'kNames[was % 8]')),
+    ('kNames[was % 7]',
+     'kNames[was % 8]',
+     ('kNames[was % 8]', 'kNames[was % 9]')),
 ])
 sys.stdout.write("OK\n")
 PY
@@ -1197,6 +1198,10 @@ plan(so, [
      '                                    chipModifier = focus.track(page, "game-thread-hints"), onChange = a.onGameThreadHints)\n',
      '"game-thread-hints"'),
 ])
+# the overlay's arguments moved out a level once (20 -> 12 spaces): find the line whatever its indentation
+import re
+_m = re.search(r"\n( +)lowLatency = lowLatency,\n", open(sa, encoding='utf-8').read())
+_i = _m.group(1) if _m else '                    '
 plan(sa, [
     (['    private var lowLatency by mutableStateOf(true)\n',
       '    private var lowLatencyTouch by mutableStateOf(false)\n'],
@@ -1206,15 +1211,15 @@ plan(sa, [
       '        lowLatencyTouch = SessionPrefs.lowLatencyTouch(this)\n'],
      '        gameThreadHints = SessionPrefs.gameThreadHints(this)\n',
      'gameThreadHints = SessionPrefs.gameThreadHints(this)'),
-    (['                    lowLatency = lowLatency,\n',
+    ([_i + 'lowLatency = lowLatency,\n',
       '                    lowLatencyTouch = lowLatencyTouch,\n'],
-     '                    gameThreadHints = gameThreadHints,\n'
-     '                    onGameThreadHints = { on ->\n'
-     '                        SessionPrefs.setGameThreadHints(this@SessionActivity, on)\n'
-     '                        gameThreadHints = on\n'
-     '                        if (on) android.util.Log.i("GameThreadHints", com.droiddeck.launcher.session.GameThreadHints.start(this@SessionActivity))\n'
-     '                        else com.droiddeck.launcher.session.GameThreadHints.stop()\n'
-     '                    },\n',
+     _i + 'gameThreadHints = gameThreadHints,\n' +
+     _i + 'onGameThreadHints = { on ->\n' +
+     _i + '    SessionPrefs.setGameThreadHints(this@SessionActivity, on)\n' +
+     _i + '    gameThreadHints = on\n' +
+     _i + '    if (on) android.util.Log.i("GameThreadHints", com.droiddeck.launcher.session.GameThreadHints.start(this@SessionActivity))\n' +
+     _i + '    else com.droiddeck.launcher.session.GameThreadHints.stop()\n' +
+     _i + '},\n',
      'onGameThreadHints = { on ->'),
 ])
 for path, s in out.items():
@@ -1306,20 +1311,20 @@ def patch(path, edits):
         s = s.replace(old, new, 1)
     open(path, 'w', encoding='utf-8').write(s)
 patch(cpp, [
-    ('PAD_TYPE_STEAM_2015 = 6, PAD_TYPE_LAST = PAD_TYPE_STEAM_2015;',
-     'PAD_TYPE_STEAM_2015 = 6,\n                          PAD_TYPE_NONE = 7, PAD_TYPE_LAST = PAD_TYPE_NONE;',
-     'PAD_TYPE_NONE = 7'),
+    ('PAD_TYPE_STEAM_2015 = 7, PAD_TYPE_LAST = PAD_TYPE_STEAM_2015',
+     'PAD_TYPE_STEAM_2015 = 7,\n                          PAD_TYPE_NONE = 8, PAD_TYPE_LAST = PAD_TYPE_NONE',
+     'PAD_TYPE_NONE = 8'),
     ('__attribute__((visibility("hidden"))) static int pad_type_uevent(uint32_t type, const char *action) {\n',
      '__attribute__((visibility("hidden"))) static int pad_type_uevent(uint32_t type, const char *action) {\n'
      '  if (type == PAD_TYPE_NONE) return 0;  // sdl3bridge: no pad (real controllers handed to Steam)\n',
      'if (type == PAD_TYPE_NONE) return 0;'),
     ('"Steam Controller (2015)"};', '"Steam Controller (2015)", "no pad"};', '"no pad"};'),
-    ('kNames[was % 7]', 'kNames[was % 8]', 'kNames[was % 8]'),
+    ('kNames[was % 8]', 'kNames[was % 9]', 'kNames[was % 9]'),
 ])
 patch(fiw, [
-    ('    public static final int PAD_TYPE_STEAM_2015 = 6;\n',
-     '    public static final int PAD_TYPE_STEAM_2015 = 6;\n    public static final int PAD_TYPE_NONE = 7;\n',
-     'PAD_TYPE_NONE = 7'),
+    ('    public static final int PAD_TYPE_STEAM_2015 = 7;\n',
+     '    public static final int PAD_TYPE_STEAM_2015 = 7;\n    public static final int PAD_TYPE_NONE = 8;\n',
+     'PAD_TYPE_NONE = 8'),
 ])
 print("OK")
 PY
@@ -2188,11 +2193,13 @@ fi
 PBS="$DD/tools/proot/build.sh"
 if [ -f "$PBS" ]; then
   res=$(python3 - "$PBS" <<'PY'
-import sys
+import re, sys
 p = sys.argv[1]
 s = open(p, encoding='utf-8').read()
 if 'sdl3deck: other sources' in s:
     print("SKIP"); sys.exit(0)
+if re.search(r'for url in "\$primary" "\$@"', s) and re.search(r'fetch talloc\.tar\.gz [^\n]*\\\n\s*"https://', s):
+    print("UPSTREAM"); sys.exit(0)  # upstream tries other sources of talloc itself (same SHA-256 check)
 edits = [
     ('''fetch() {
   curl -fsSL --retry 3 -o "$WORK/$1" "$2"
@@ -2227,6 +2234,7 @@ PY
   case "$res" in
     OK) ok "proot build: talloc from other sources too when samba.org can't be reached (same SHA-256)" ;;
     SKIP) skip "proot build: talloc sources" ;;
+    UPSTREAM) ok "proot build: upstream fetches talloc from more than one source itself (step 31 not needed)" ;;
     *) warn "proot build left as upstream (tools/proot/build.sh changed, see ANCHOR-MISS above)" ;;
   esac
 fi

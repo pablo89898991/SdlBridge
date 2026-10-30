@@ -29,7 +29,10 @@ SDL3Bridge is for **every SDL3-supported controller** (USB or Bluetooth, any ven
   patcher on a fresh clone of upstream main in both modes (plain and `SDL3_EMBED_BRIDGE=1`), twice (the second run
   must change nothing), and fix every TODO / ERROR. Optional features: all edits of a feature are computed first
   and written only when every anchor matched (never half a feature), and a miss is `warn`, not `die`.
-- When upstream fixes something the patcher fixed, detect it and leave upstream's version (e.g. step 28).
+- When upstream fixes something the patcher fixed, detect it and leave upstream's version (e.g. steps 28, 31).
+- Pad type numbers (ring pad_type, FakeInputWriter.PAD_TYPE_*): upstream owns 0-5 (5 = its raw mouse ring, not a
+  pad); ours are DualSense Edge 6, Steam Controller 2015 7, none 8, and kNames[] has a "mouse" entry at 5. A new
+  upstream type means renumbering ours above it. Kotlin/C++ use the names only, never the numbers.
 - Upstream's CI sometimes downloads pinned files from the release of the repo being built (`$GITHUB_REPOSITORY`).
   The fork has no such releases: fetch them from upstream's release instead (keeping upstream's SHA-256 check).
 - Wrapping a library function from a preload (`LD_PRELOAD` / `/etc/ld.so.preload`): never rely on
