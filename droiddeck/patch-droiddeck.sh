@@ -2531,5 +2531,37 @@ else
   warn "droiddeck-game-env or game-env-eac.py not found (Easy Anti-Cheat offline start left as upstream's)"
 fi
 
+# ---------- 36. Release signing renames the bridge's task affinity too (SDL3_EMBED_BRIDGE) ----------
+# Upstream's tools/release/sign-apk.sh renames every authority / task affinity named after the package for its other
+# package variants, and a Python test (test_sign_apk_renames) fails the build when one is missing from its list. The
+# built-in bridge's screen has its own task ("${applicationId}.sdl3bridge", step 30): add it to that list.
+SIGN="$DD/tools/release/sign-apk.sh"
+if grep -q 'taskAffinity="${applicationId}.sdl3bridge"' "$MANIFEST" 2>/dev/null; then
+  if [ ! -f "$SIGN" ]; then
+    warn "tools/release/sign-apk.sh not found (the bridge's task affinity is not in its rename list)"
+  else
+    res=$(python3 - "$SIGN" <<'PY'
+import re, sys
+p = sys.argv[1]
+s = open(p, encoding="utf-8").read()
+if '"$P.sdl3bridge=$pkg.sdl3bridge"' in s:
+    print("SKIP"); sys.exit(0)
+m = re.search(r'\n(\s+)"\$P=\$pkg" ', s)
+if not m or 'axml_rename' not in s[max(0, m.start() - 200):m.start()]:
+    sys.stderr.write('ANCHOR-MISS tools/release/sign-apk.sh :: the axml_rename call\'s "$P=$pkg" argument\n')
+    sys.exit(3)
+s = s[:m.end()] + '"$P.sdl3bridge=$pkg.sdl3bridge" ' + s[m.end():]
+open(p, "w", encoding="utf-8").write(s)
+print("OK")
+PY
+)
+    case "$res" in
+      OK) ok "release signing renames the bridge's task affinity (.sdl3bridge) for other package variants" ;;
+      SKIP) skip "release signing: .sdl3bridge rename" ;;
+      *) warn "sign-apk.sh changed: add \"\$P.sdl3bridge=\$pkg.sdl3bridge\" to its axml_rename call (see ANCHOR-MISS above)" ;;
+    esac
+  fi
+fi
+
 echo
 echo "Done. Review with:  cd \"$DD\" && git diff"
