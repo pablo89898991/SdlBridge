@@ -2165,15 +2165,18 @@ PY
 
   # f) DroidDeck's app start-up skips its own set-up in the bridge's process (as for its other helper processes)
   res=$(python3 - "$PKG/App.kt" <<'PY'
-import sys
+import re, sys
 p = sys.argv[1]
 s = open(p, encoding='utf-8').read()
 if ':sdl3"' in s:
     print("SKIP"); sys.exit(0)
-old = '        if (process == "$packageName:vr_recovery" || process == "$packageName:rgb_diagnostic") return\n'
-if s.count(old) != 1:
+# before upstream's own "helper processes return here" statement (one line or wrapped over several), else before
+# the first set-up call of the main process
+m = re.search(r'\n( +)if \(process == "\$packageName:vr_recovery"', s) or re.search(r'\n( +)CrashHandler\.install\(this\)\n', s)
+if not m or s.count('if (process == "$packageName:vr_recovery"') > 1:
     sys.stderr.write("ANCHOR-MISS App.kt :: helper-process return\n"); sys.exit(3)
-s = s.replace(old, '        if (process == "$packageName:sdl3") return  // sdl3droiddeck: the SDL3 bridge\'s process\n' + old, 1)
+at = m.start() + 1
+s = s[:at] + m.group(1) + 'if (process == "$packageName:sdl3") return  // sdl3droiddeck: the SDL3 bridge\'s process\n' + s[at:]
 open(p, 'w', encoding='utf-8').write(s)
 print("OK")
 PY
