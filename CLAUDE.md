@@ -35,6 +35,10 @@ SDL3Bridge is for **every SDL3-supported controller** (USB or Bluetooth, any ven
   flake under load). Some check the manifest (every `${applicationId}.*` authority / task affinity must be in
   sign-apk.sh's rename list: step 36).
 - When upstream fixes something the patcher fixed, detect it and leave upstream's version (e.g. steps 28, 31).
+- Upstream has git submodules (external/MaliBridge, tools/syncthing/...). The sync copies files (rsync), which can't
+  carry them, so `newfork/sync.yml` records upstream's gitlinks (`ls-files -s`, mode 160000) and sets them in the
+  build branch's index (`update-index --cacheinfo`). A sync.yml change must also be copied to SDLApiDroidDeck's
+  `main` (`.github/workflows/sync.yml`).
 - Pad type numbers (ring pad_type, FakeInputWriter.PAD_TYPE_*): upstream owns 0-5 (5 = its raw mouse ring, not a
   pad); ours are DualSense Edge 6, Steam Controller 2015 7, none 8, and kNames[] has a "mouse" entry at 5. A new
   upstream type means renumbering ours above it. Kotlin/C++ use the names only, never the numbers.
