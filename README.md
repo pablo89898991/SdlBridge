@@ -19,7 +19,8 @@ Buttons: Rumble (0.7 s), Light (cycles lightbar colours), Reset (clear green mar
 
 ## Updates
 - Every push builds an APK and publishes it as a GitHub Release (`build-N`, notes contain `sdl=<version>`).
-- A weekly scheduled run checks the latest stable SDL3 release and publishes a new build only when it changed.
+- SDL3 is the release pinned in `droiddeck/sdl3.env`. The daily **SDL update** run moves that pin to each new stable
+  SDL3 release after testing it, then publishes a new build (see "SDL3 updates by itself" below).
 - The app checks the repo's latest release when it opens (the repo must be PUBLIC); tapping the update
   button opens the APK download. Android then asks you to install it over the old version.
 - All builds use the fixed test key `app/bridge-debug.keystore`, so updates install over each other.
@@ -208,6 +209,24 @@ pad.log: `deck pad: on for the SDL3 bridge on the desktop`, `hookup: Steam runs 
 running on the desktop`, and the bridge's `hookup: DroidDeck's desktop has no Steam running`. Old builds of either
 app: the bridge without this ignores the desktop flag (hook-up stays on, as before); DroidDeck without it keeps
 the desktop as upstream (Xbox 360 pads).
+
+## SDL3 updates by itself
+
+Both apps -- SDL3Bridge and SDL3DroidDeck -- build with the SDL3 release pinned in `droiddeck/sdl3.env` (version +
+SHA-256 of its source archive). The **SDL update** workflow (`.github/workflows/sdl-update.yml`) keeps that pin
+current: every day it looks for SDL's newest stable SDL3 release (full releases of an even minor version -- not
+SDL2, not the 3.odd previews). When there is a newer one it
+
+1. downloads it and pins its SHA-256 (checked against GitHub's own record of the file),
+2. tests it: SDL3DroidDeck's patch must take it in on the newest DroidDeck (step 30), and the SDL3Bridge app must
+   build with it,
+3. only then commits the new pin to `main`, starts **Build SDL3 bridge APK** (a new SDL3Bridge release), and --
+   if this repo has a `SYNC_PAT` secret (a token that may run SDLApiDroidDeck's workflows) -- starts SDLApiDroidDeck's
+   sync, which builds a new SDL3DroidDeck. Without the secret, that sync's daily run takes the new SDL in.
+
+A failed test leaves the pin as it is and fails the run (GitHub emails you). **Actions -> SDL update -> Run
+workflow** checks now; give it a version to move to that one (also to go back). The bot commits to `main`, so pull
+before pushing your own changes (commit, then `git pull --rebase`).
 
 ## Windows components for programs on the desktop
 

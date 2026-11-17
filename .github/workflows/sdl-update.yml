@@ -1,0 +1,152 @@
+# SDL update: keeps SDL3 current by itself. Every day it looks for SDL's newest stable SDL3 release (full releases of
+# an even minor version: no SDL2, no previews). When there is a newer one than droiddeck/sdl3.env pins, it
+#   1. downloads it and pins its SHA-256 (checked against GitHub's own record of the file when it has one),
+#   2. tests it: SDL3DroidDeck's patch on the newest DroidDeck must take it in (step 30), and the SDL3Bridge app must
+#      build with it,
+#   3. only then commits the new pin, starts "Build SDL3 bridge APK" (the bridge app's release), and -- with a
+#      SYNC_PAT secret in this repo -- SDLApiDroidDeck's sync (without it, that sync's daily run picks it up).
+# A failed test leaves the pin alone and fails this run, so GitHub tells you. "Run workflow" checks now; give a version
+# to move to that one instead (also to go back).
+name: SDL update
+
+on:
+  schedule:
+    - cron: '41 4 * * *'
+  workflow_dispatch:
+    inputs:
+      version:
+        description: SDL3 version to move to, e.g. 3.4.20 (empty = the newest stable release)
+        default: ''
+
+permissions:
+  contents: write   # commit the new pin
+  actions: write    # start the bridge app's build
+
+concurrency:
+  group: sdl-update
+  cancel-in-progress: false
+
+env:
+  DROIDDECK_REPO: ${{ github.repository_owner }}/SDLApiDroidDeck
+
+jobs:
+  update:
+    runs-on: ubuntu-24.04
+    env:
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Newest stable SDL3 release
+        id: new
+        run: |
+          set -euo pipefail
+          . droiddeck/sdl3.env
+          want="${{ inputs.version }}"
+          [ -n "$want" ] || want=$(bash tools/sdl-latest.sh)
+          echo "pinned: SDL $SDL_VERSION; wanted: SDL $want"
+          echo "version=$want" >> "$GITHUB_OUTPUT"
+          newest=$(printf '%s\n%s\n' "$SDL_VERSION" "$want" | sort -V | tail -1)
+          if [ "$want" = "$SDL_VERSION" ]; then
+            echo "update=false" >> "$GITHUB_OUTPUT"
+            echo "SDL is up to date."
+          elif [ -z "${{ inputs.version }}" ] && [ "$newest" != "$want" ]; then
+            echo "update=false" >> "$GITHUB_OUTPUT"
+            echo "The pinned SDL is newer than SDL's newest stable release: left as it is."
+          else
+            echo "update=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Download it and pin its SHA-256
+        if: steps.new.outputs.update == 'true'
+        run: |
+          set -euo pipefail
+          v="${{ steps.new.outputs.version }}"
+          [[ "$v" =~ ^3\.[0-9]+\.[0-9]+$ ]] || { echo "::error::not an SDL3 version: $v"; exit 1; }
+          curl -fsSL --retry 4 --retry-all-errors --connect-timeout 20 --max-time 600 -o /tmp/sdl.tar.gz \
+            "https://github.com/libsdl-org/SDL/releases/download/release-$v/SDL3-$v.tar.gz"
+          sum=$(sha256sum /tmp/sdl.tar.gz | cut -d' ' -f1)
+          digest=$(gh api "repos/libsdl-org/SDL/releases/tags/release-$v" \
+            --jq ".assets[] | select(.name == \"SDL3-$v.tar.gz\") | .digest // empty" 2>/dev/null || true)
+          if ! [[ "$digest" =~ ^sha256:[0-9a-f]{64}$ ]]; then
+            [ -z "$digest" ] || echo "::warning::GitHub's record of SDL3-$v.tar.gz could not be read; the pinned SHA-256 is the download's"
+            digest=""
+          fi
+          if [ -n "$digest" ] && [ "$digest" != "sha256:$sum" ]; then
+            echo "::error::SDL3-$v.tar.gz: downloaded $sum, GitHub lists $digest"
+            exit 1
+          fi
+          echo "SDL3-$v.tar.gz: sha256 $sum${digest:+ (GitHub lists the same)}"
+          sed -i "s/^SDL_VERSION=.*/SDL_VERSION=$v/; s/^SDL_SHA256=.*/SDL_SHA256=$sum/" droiddeck/sdl3.env
+          cat droiddeck/sdl3.env
+
+      - name: "Test: SDL3DroidDeck's patch takes it in, on the newest DroidDeck"
+        if: steps.new.outputs.update == 'true'
+        run: |
+          set -euo pipefail
+          v="${{ steps.new.outputs.version }}"
+          git clone -q --depth 1 https://github.com/Droid-Deck/DroidDeck /tmp/dd
+          SDL3_EMBED_BRIDGE=1 SDL3_APP_LABEL=SDL3DroidDeck bash droiddeck/patch-droiddeck.sh /tmp/dd 2>&1 | tee /tmp/patch.log
+          need() { grep -qF "$1" /tmp/patch.log || { echo "::error::the patch did not get as far as: $1"; exit 1; }; }
+          need "SDL3 $v source (SHA-256 checked)"
+          need "SDL3 + bridge in DroidDeck's native build"
+          need "SDL3 bridge Java"
+          need "manifest: SDL3 bridge screen"
+          rm -rf /tmp/dd
+
+      - uses: actions/setup-java@v5
+        if: steps.new.outputs.update == 'true'
+        with: { distribution: temurin, java-version: 17 }
+
+      - name: Accept Android licenses
+        if: steps.new.outputs.update == 'true'
+        run: yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --licenses || true
+
+      - name: SDL3 for the SDL3Bridge app
+        if: steps.new.outputs.update == 'true'
+        run: |
+          set -euo pipefail
+          bash tools/sdl-fetch.sh app/jni/SDL
+          mkdir -p app/src/main/java
+          cp -r app/jni/SDL/android-project/app/src/main/java/org app/src/main/java/
+          find app/jni/SDL -name 'gradle-wrapper.jar' -delete
+
+      - uses: gradle/actions/setup-gradle@v4
+        if: steps.new.outputs.update == 'true'
+        with: { gradle-version: "8.9" }
+
+      - name: "Test: the SDL3Bridge app builds with it"
+        if: steps.new.outputs.update == 'true'
+        run: gradle :app:assembleDebug --no-daemon
+
+      - name: Commit the new pin
+        if: steps.new.outputs.update == 'true'
+        run: |
+          set -euo pipefail
+          v="${{ steps.new.outputs.version }}"
+          git config user.name "sdl-update[bot]"
+          git config user.email "sdl-update@users.noreply.github.com"
+          git add droiddeck/sdl3.env
+          git commit -q -m "SDL $v (SDL update: newest stable SDL3, tested with SDL3DroidDeck's patch and the bridge app)"
+          for try in 1 2 3; do
+            git push origin "HEAD:${{ github.ref_name }}" && exit 0
+            git pull -q --rebase origin "${{ github.ref_name }}"
+          done
+          echo "::error::could not push the new pin"
+          exit 1
+
+      - name: Build the SDL3Bridge app with it
+        if: steps.new.outputs.update == 'true'
+        run: gh workflow run build.yml --ref "${{ github.ref_name }}"
+
+      - name: Sync SDL3DroidDeck now (with a SYNC_PAT secret in this repo)
+        if: steps.new.outputs.update == 'true'
+        env:
+          SYNC_PAT: ${{ secrets.SYNC_PAT }}
+        run: |
+          if [ -z "$SYNC_PAT" ]; then
+            echo "No SYNC_PAT secret in this repo: $DROIDDECK_REPO's daily sync takes the new SDL in."
+            exit 0
+          fi
+          GH_TOKEN="$SYNC_PAT" gh workflow run sync.yml -R "$DROIDDECK_REPO" ||
+            echo "::warning::could not start $DROIDDECK_REPO's sync; its daily run takes the new SDL in"

@@ -35,10 +35,18 @@ SDL3Bridge is for **every SDL3-supported controller** (USB or Bluetooth, any ven
   flake under load). Some check the manifest (every `${applicationId}.*` authority / task affinity must be in
   sign-apk.sh's rename list: step 36).
 - When upstream fixes something the patcher fixed, detect it and leave upstream's version (e.g. steps 28, 31).
+- SDL3: one pin for both apps, `droiddeck/sdl3.env` (version + SHA-256). `.github/workflows/sdl-update.yml` moves it
+  daily to SDL's newest stable SDL3 release (`tools/sdl-latest.sh`: even minor, no SDL2, no previews) after testing
+  (patcher step 30 on the newest DroidDeck + the bridge app's Gradle build), commits it, and starts the bridge build
+  (and SDLApiDroidDeck's sync with a SYNC_PAT secret). The bridge app fetches the pin with `tools/sdl-fetch.sh`.
+  The bot commits to `main`: the owner's pushes need commit + `git pull --rebase` first (they do that anyway).
 - Upstream has git submodules (external/MaliBridge, tools/syncthing/...). The sync copies files (rsync), which can't
   carry them, so `newfork/sync.yml` records upstream's gitlinks (`ls-files -s`, mode 160000) and sets them in the
   build branch's index (`update-index --cacheinfo`). A sync.yml change must also be copied to SDLApiDroidDeck's
   `main` (`.github/workflows/sync.yml`).
+- Who may see DroidDeck's pad nodes: upstream asks `process_reads_pads()` (the Steam client and Steam's
+  `streaming_client`; formerly `process_is_steam_client()`). Steps 13 and 29 follow whichever upstream has (the SC1
+  node and the desktop rules); the Hook-up nodes stay the Steam client's only (`hookup_native.inc`).
 - Pad type numbers (ring pad_type, FakeInputWriter.PAD_TYPE_*): upstream owns 0-5 (5 = its raw mouse ring, not a
   pad); ours are DualSense Edge 6, Steam Controller 2015 7, none 8, and kNames[] has a "mouse" entry at 5. A new
   upstream type means renumbering ours above it. Kotlin/C++ use the names only, never the numbers.

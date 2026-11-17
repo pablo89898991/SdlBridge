@@ -176,7 +176,10 @@ p = sys.argv[1]
 s = open(p, encoding='utf-8').read()
 done = 0
 for old in ("        GameThreadHints.stop()\n        SessionEvents.transition(SessionPhase.STOPPING",
-            "        GameThreadHints.stop() // also when the session never got as far as running\n"):
+            "        GameThreadHints.stop() // also when the session never got as far as running\n",
+            # since upstream moved the STOPPING transition into stopSession's lock: the stop path, and onDestroy
+            "        GpuClockPin.stop(this)\n        GameThreadHints.stop()\n",
+            "        stopSession(0)\n        GameThreadHints.stop()\n"):
     if s.count(old) == 1:
         first, rest = old.split("\n", 1)
         s = s.replace(old, first + "\n        com.droiddeck.launcher.input.DualSenseBridge.detach()\n" + rest, 1)
@@ -270,7 +273,8 @@ path = sys.argv[1]
 s = open(path, encoding="utf-8").read()
 if "DualSenseBridge.routeRumble" in s:
     print("SKIP"); sys.exit(0)
-m = re.search(r"\n( *)(?:@Synchronized )?(?:private )?fun buzz\(strong: Int, weak: Int, ms: Int, slot: Int\) \{\n( *)if \(!enabled[^\n]*\) return\n", s)
+# the buzz() with a body (upstream later added sender / ownUser parameters and a one-line overload that forwards)
+m = re.search(r"\n( *)(?:@Synchronized )?(?:private )?fun buzz\(strong: Int, weak: Int, ms: Int, slot: Int[^)]*\) \{\n( *)if \(!enabled[^\n]*\) return\n", s)
 if not m:
     sys.stderr.write("ANCHOR-MISS RumbleComponent.kt :: fun buzz(strong, weak, ms, slot) { if (!enabled...) return\n")
     sys.exit(3)
@@ -467,24 +471,27 @@ fi
 GTH="$PKG/session/GameThreadHints.kt"
 if [ -f "$GTH" ]; then
   if python3 - "$GTH" <<'PY'
-import sys
+import re, sys
 p = sys.argv[1]
 s = open(p, encoding='utf-8').read()
 if "game thread hints: any device" not in s:
-    old = '        if (Build.VERSION.SDK_INT < 31 || Build.SOC_MODEL != "CQ8725S") return "game thread hints: Odin 3 only"'
-    new = ('        if (Build.VERSION.SDK_INT < 31) return "game thread hints: needs Android 12+"\n'
-           '        // sdl3bridge: game thread hints: any device. ADPF is a pure scheduling hint (it cannot change\n'
-           '        // how a game runs); a power HAL without hint sessions just returns none and nothing happens.\n'
-           '        // Tuned on the Odin 3; switch it off in the session drawer (Latency) if a device behaves worse.')
-    if s.count(old) != 1:
-        sys.stderr.write("ANCHOR-MISS GameThreadHints device gate (found %d)\n" % s.count(old))
+    # upstream's gate in start(): "Android 12+ and <these SoCs>" (first the Odin 3's, later a list behind supported()):
+    # keep the Android 12+ part, drop the SoC part, whatever its wording
+    gate = list(re.finditer(r'\n( +)if \(Build\.VERSION\.SDK_INT < 31 \|\| [^\n]*SOC_MODEL[^\n]*\) return "game thread hints: [^"\n]*"', s))
+    if len(gate) != 1:
+        sys.stderr.write("ANCHOR-MISS GameThreadHints device gate (found %d)\n" % len(gate))
         sys.exit(3)
-    s = s.replace(old, new, 1)
+    i = gate[0].group(1)
+    new = ('\n' + i + 'if (Build.VERSION.SDK_INT < 31) return "game thread hints: needs Android 12+"\n' +
+           i + '// sdl3bridge: game thread hints: any device. ADPF is a pure scheduling hint (it cannot change\n' +
+           i + '// how a game runs); a power HAL without hint sessions just returns none and nothing happens.\n' +
+           i + '// Tuned upstream on Snapdragon 8 Elite; switch it off in the session drawer (Latency) if a device behaves worse.')
+    s = s[:gate[0].start()] + new + s[gate[0].end():]
     open(p, 'w', encoding='utf-8').write(s)
 sys.stdout.write("OK\n")
 PY
   then ok "ADPF game-thread boosting unlocked (any Android 12+ device)"
-  else die "GameThreadHints patch failed: an upstream anchor moved (see ANCHOR-MISS above)."
+  else warn "GameThreadHints: left to upstream's devices only (its gate changed, see ANCHOR-MISS above)."
   fi
 else
   warn "GameThreadHints.kt not found (skipping ADPF unlock)"
@@ -595,9 +602,23 @@ if [ -f "$CPP" ] && [ -f "$SDP" ] && [ -f "$FIW" ]; then
 import sys
 cpp, sdp, fiw = sys.argv[1], sys.argv[2], sys.argv[3]
 
+def reader(s):
+    # who may see DroidDeck's pad nodes: upstream asked process_is_steam_client(), later process_reads_pads() (the
+    # Steam client and Steam's streaming_client); the SC1 node follows whichever upstream uses
+    return 'process_reads_pads()' if 'static bool process_reads_pads()' in s else 'process_is_steam_client()'
+
+def follow(x, r):
+    if isinstance(x, str):
+        return x.replace('process_is_steam_client()', r)
+    if isinstance(x, tuple):
+        return tuple(follow(y, r) for y in x)
+    return x
+
 def patch(path, edits):
     s = open(path, encoding='utf-8').read()
+    r = reader(s)
     for edit in edits:
+        edit = follow(edit, r)
         old, new, marker = edit[0], edit[1], edit[2]
         want = edit[3] if len(edit) > 3 else 1
         markers = marker if isinstance(marker, tuple) else (marker,)
@@ -957,8 +978,13 @@ if MARK in s:
     sys.exit(0)
 block = open(inc, encoding='utf-8').read()
 
+READER = 'process_reads_pads()' if 'static bool process_reads_pads()' in s else 'process_is_steam_client()'
+
 def rep(old, new, want=1):
     global s
+    # step 13's SC1 lines name upstream's reader (see there); the hook-up's own lines keep process_is_steam_client()
+    old = old.replace('is_sc1_hidraw_path(pathname) && process_is_steam_client()', 'is_sc1_hidraw_path(pathname) && ' + READER)
+    new = new.replace('is_sc1_hidraw_path(pathname) && process_is_steam_client()', 'is_sc1_hidraw_path(pathname) && ' + READER)
     n = s.count(old)
     if n != want:
         sys.stderr.write("ANCHOR-MISS hookup :: %r (found %d, expected %d)\n" % (old[:70], n, want))
@@ -1944,10 +1970,13 @@ edits = {
          '"run/udev/data"), SessionState.deckPad && SessionState.mode != MODE_DESKTOP, !uinput && SessionState.mode == MODE_STEAM)', 1),
     ],
 }
+READER = 'process_reads_pads()' if 'static bool process_reads_pads()' in texts[cpp] else 'process_is_steam_client()'
 for path, changes in edits.items():
     if done[path]:
         continue
     for old, new, want in changes:
+        if path == cpp:  # upstream's "who reads the pads" (process_is_steam_client(), later process_reads_pads())
+            old, new = old.replace('process_is_steam_client()', READER), new.replace('process_is_steam_client()', READER)
         n = texts[path].count(old)
         if n != want:
             sys.stderr.write("ANCHOR-MISS %s :: %r (found %d, expected %d)\n" % (path.rsplit('/', 1)[-1], old[:70], n, want))

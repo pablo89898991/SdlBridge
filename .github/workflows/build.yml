@@ -1,9 +1,9 @@
 name: Build SDL3 bridge APK
+# SDL3 comes from the release pinned in droiddeck/sdl3.env (SHA-256 checked) -- the same one SDL3DroidDeck builds with.
+# The "SDL update" workflow moves that pin when SDL publishes a new stable release, tests it, and starts this build.
 on:
   push:
   workflow_dispatch:
-  schedule:
-    - cron: '17 5 * * 1'   # every Monday: rebuild only if SDL has a newer stable release
 permissions:
   contents: write           # needed to publish the release the app's updater reads
 jobs:
@@ -12,20 +12,13 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Find latest SDL release
+      - name: Pinned SDL release
         id: sdl
-        env:
-          GH_TOKEN: ${{ github.token }}
         run: |
-          TAG=$(gh api repos/libsdl-org/SDL/releases/latest --jq .tag_name)
-          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
-          BUILD=true
-          if [ "${{ github.event_name }}" = "schedule" ]; then
-            LAST=$(gh release view --repo "$GITHUB_REPOSITORY" --json body --jq .body 2>/dev/null | grep -o 'sdl=[^ ]*' | head -1 | cut -d= -f2 || true)
-            echo "Last released SDL: ${LAST:-none}, latest SDL: $TAG"
-            if [ "$LAST" = "$TAG" ]; then BUILD=false; fi
-          fi
-          echo "build=$BUILD" >> "$GITHUB_OUTPUT"
+          . droiddeck/sdl3.env
+          echo "tag=release-$SDL_VERSION" >> "$GITHUB_OUTPUT"
+          echo "build=true" >> "$GITHUB_OUTPUT"
+          echo "SDL $SDL_VERSION (droiddeck/sdl3.env)"
 
       - uses: actions/setup-java@v5
         if: steps.sdl.outputs.build == 'true'
@@ -38,7 +31,7 @@ jobs:
       - name: Fetch SDL3 and its Android Java classes
         if: steps.sdl.outputs.build == 'true'
         run: |
-          git clone --depth 1 --branch "${{ steps.sdl.outputs.tag }}" https://github.com/libsdl-org/SDL app/jni/SDL
+          bash tools/sdl-fetch.sh app/jni/SDL
           mkdir -p app/src/main/java
           cp -r app/jni/SDL/android-project/app/src/main/java/org app/src/main/java/
           # SDL ships its own Gradle wrapper jar; gradle/actions refuses to run if it finds an unknown one.
