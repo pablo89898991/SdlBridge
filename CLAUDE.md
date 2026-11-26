@@ -68,7 +68,8 @@ SDL3Bridge is for **every SDL3-supported controller** (USB or Bluetooth, any ven
   Wine menu (shared C: drive = compatdata/3589834995). Windows components for desktop programs: step 32. Settings ->
   Wine (Proton updates, `WineSettings.kt`): step 34. Never make Windows programs depend on the Steam client.
 - The merged app "SDLApiDroidDeck" (repo name; app label SDL3DroidDeck, app ID com.droiddeck.launcher):
-  `newfork/PLAN.md`, its workflows `newfork/sync.yml` + `newfork/build.yml` + `newfork/publish.yml` (releases),
+  `newfork/PLAN.md`, its workflows `newfork/sync.yml` + `newfork/build.yml` + `newfork/publish.yml` (releases) +
+  `newfork/retry-build.yml` (re-runs a build that failed only on a download, e.g. Maven Central's 429),
   README `newfork/README.md`. The bridge
   runs there in the app's `:sdl3` process; bridge code must keep working both built in and as its own app
   (`Host.embedded()` on the bridge side, `DualSenseBridge.bridgePackage()` on DroidDeck's).
