@@ -349,7 +349,8 @@ report at a time), with no taps lost instead of up to 4 in 10. When Steam reads 
   becomes a release with `SDL3DroidDeck.apk`; the newest 10 are kept). The APK is built on `sdl3droiddeck`, which the
   sync fills.
 - Repo secret `SYNC_PAT`: a GitHub token with **repo** + **workflow** scope (GitHub doesn't let the built-in token
-  push workflow files). Optional: `DOCKERHUB_USER` / `DOCKERHUB_TOKEN`, so the build pulls its Debian image from
+  push workflow files). Tokens expire (classic ones after 30 days by default): when it does, the sync's first step
+  says so -- regenerate it at github.com/settings/tokens and paste the new value into the secret. Optional: `DOCKERHUB_USER` / `DOCKERHUB_TOKEN`, so the build pulls its Debian image from
   Docker Hub signed in.
 - Then *Actions → Sync upstream + SDL3 bridge → Run workflow*. It runs daily after that.
 
